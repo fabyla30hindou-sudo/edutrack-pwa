@@ -1,0 +1,8 @@
+{
+  "name": "EduTrack PWA",
+  "description": "Une application éducative intelligente de suivi-évaluation des apprenants en temps réel.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
