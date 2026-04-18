@@ -116,7 +116,7 @@ def seed() -> None:
 
         admin_user = get_or_create_user(
             db,
-            email="admin@lycee-scientifique.fr",
+            email="admin@gmail.fr",
             full_name="Administrateur Ecole",
             password="admin123",
             school_id=school_id,
@@ -128,7 +128,7 @@ def seed() -> None:
 
         teacher_user = get_or_create_user(
             db,
-            email="valerie@lycee-scientifique.fr",
+            email="prof@gmail.fr",
             full_name="Mme Valerie",
             password="teacher123",
             school_id=school_id,
@@ -147,7 +147,7 @@ def seed() -> None:
 
         parent_user = get_or_create_user(
             db,
-            email="jean.martin@example.com",
+            email="jean@example.com",
             full_name="Jean Martin",
             password="parent123",
             school_id=school_id,
@@ -160,9 +160,9 @@ def seed() -> None:
             db.flush()
 
         students_spec = [
-            ("leo.martin@lycee-scientifique.fr", "Leo Martin", "student123", "MAT001", "6eme A"),
-            ("nina.essono@lycee-scientifique.fr", "Nina Essono", "student123", "MAT002", "6eme A"),
-            ("paul.ngo@lycee-scientifique.fr", "Paul Ngo", "student123", "MAT003", "5eme B"),
+            ("martin@gmail.fr", "Leo Martin", "student123", "MAT001", "6eme A"),
+            ("essono@gmail.fr", "Nina Essono", "student123", "MAT002", "6eme A"),
+            ("ngo@gmail.fr", "Paul Ngo", "student123", "MAT003", "5eme B"),
         ]
         seeded_students: list[Student] = []
         for email, full_name, password, matricule, class_name in students_spec:
@@ -353,10 +353,10 @@ def seed() -> None:
         print("Seed termine.")
         print("Identifiants principaux:")
         print("  Superadmin: superadmin@edutrack.fr / superadmin123")
-        print("  Admin: admin@lycee-scientifique.fr / admin123")
-        print("  Teacher: valerie@lycee-scientifique.fr / teacher123")
+        print("  Admin: admin@gmail.fr / admin123")
+        print("  Teacher: valerie@gmail.fr / teacher123")
         print("  Parent: jean.martin@example.com / parent123")
-        print("  Student: leo.martin@lycee-scientifique.fr / student123")
+        print("  Student: leo.martin@gmail.fr / student123")
         print("Resume:", summary)
     finally:
         db.close()
