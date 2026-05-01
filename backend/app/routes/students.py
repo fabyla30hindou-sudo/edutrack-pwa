@@ -14,6 +14,20 @@ import json
 router = APIRouter(prefix="/students", tags=["students"])
 
 
+def _student_payload(db: Session, student: Student):
+    user = db.query(User).filter(User.id == student.user_id).first()
+    return {
+        "id": student.id,
+        "user_id": student.user_id,
+        "matricule": student.matricule,
+        "school_id": student.school_id,
+        "class_name": student.class_name,
+        "created_at": student.created_at,
+        "full_name": user.full_name if user else f"Élève #{student.id}",
+        "email": user.email if user else "",
+    }
+
+
 def _teacher_scope(db: Session, current_user: User):
     teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
     if not teacher:
@@ -61,7 +75,7 @@ def _assert_can_access_student(db: Session, current_user: User, student: Student
     raise HTTPException(status_code=403, detail="Unauthorized")
 
 
-@router.get("/", response_model=list[StudentResponse])
+@router.get("/", response_model=list[dict])
 def get_students(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     role = (current_user.role or "").upper()
 
@@ -93,16 +107,16 @@ def get_students(db: Session = Depends(get_db), current_user: User = Depends(get
     else:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
-    return students
+    return [_student_payload(db, student) for student in students]
 
 
-@router.get("/{student_id}", response_model=StudentResponse)
+@router.get("/{student_id}", response_model=dict)
 def get_student(student_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     _assert_can_access_student(db, current_user, student)
-    return student
+    return _student_payload(db, student)
 
 
 @router.post("/", response_model=StudentResponse)

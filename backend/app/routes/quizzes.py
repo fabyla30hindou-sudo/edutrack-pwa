@@ -45,8 +45,69 @@ def serialize_question(question: QuizQuestion) -> dict:
         "points": question.points,
     }
 
-def serialize_quiz(quiz: Quiz, db: Session) -> dict:
+def quiz_result_for_student(quiz_id: int, student_id: int, db: Session) -> dict:
+    questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
+    answers = db.query(QuizAnswer).filter(
+        QuizAnswer.quiz_id == quiz_id,
+        QuizAnswer.student_id == student_id
+    ).all()
+    answers_by_question = {answer.question_id: answer for answer in answers}
+    correct_answers = sum(1 for answer in answers if answer.is_correct == 1)
+    total_questions = len(questions)
+    score = round((correct_answers / total_questions) * 100) if total_questions else 0
+
+    return {
+        "status": "completed" if answers else "published",
+        "averageScore": score if answers else None,
+        "correctAnswers": correct_answers,
+        "answeredQuestions": len(answers),
+        "totalQuestions": total_questions,
+        "correction": [
+            {
+                "questionId": str(question.id),
+                "isCorrect": bool(answers_by_question.get(question.id) and answers_by_question[question.id].is_correct == 1),
+                "yourAnswer": answers_by_question.get(question.id).student_answer if answers_by_question.get(question.id) else "",
+                "correctAnswer": question.correct_answer or ""
+            }
+            for question in questions
+        ] if answers else []
+    }
+
+def aggregate_quiz_results(quiz_id: int, db: Session) -> dict:
+    questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
+    total_questions = len(questions)
+    if not total_questions:
+        return {"averageScore": None, "correctAnswers": 0, "answeredQuestions": 0, "attemptsCount": 0}
+
+    answers = db.query(QuizAnswer).filter(QuizAnswer.quiz_id == quiz_id).all()
+    by_student: dict[int, list[QuizAnswer]] = {}
+    for answer in answers:
+        by_student.setdefault(answer.student_id, []).append(answer)
+
+    scores = []
+    correct_answers = 0
+    for student_answers in by_student.values():
+        student_correct = sum(1 for answer in student_answers if answer.is_correct == 1)
+        correct_answers += student_correct
+        scores.append(round((student_correct / total_questions) * 100))
+
+    return {
+        "averageScore": round(sum(scores) / len(scores)) if scores else None,
+        "correctAnswers": correct_answers,
+        "answeredQuestions": len(answers),
+        "attemptsCount": len(scores)
+    }
+
+def serialize_quiz(quiz: Quiz, db: Session, current_user: User | None = None) -> dict:
     questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz.id).all()
+    result = {}
+    if current_user and (current_user.role or "").upper() == "STUDENT":
+        student = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if student:
+            result = quiz_result_for_student(quiz.id, student.id, db)
+    elif current_user and (current_user.role or "").upper() in ["TEACHER", "ADMIN", "SUPERADMIN"]:
+        result = aggregate_quiz_results(quiz.id, db)
+
     return {
         "id": quiz.id,
         "title": quiz.title,
@@ -55,15 +116,20 @@ def serialize_quiz(quiz: Quiz, db: Session) -> dict:
         "duration_minutes": quiz.duration_minutes,
         "questionCount": len(questions),
         "total_questions": len(questions),
-        "status": "published",
+        "status": result.get("status", "published"),
+        "averageScore": result.get("averageScore"),
+        "correctAnswers": result.get("correctAnswers", 0),
+        "answeredQuestions": result.get("answeredQuestions", 0),
+        "attemptsCount": result.get("attemptsCount", 0),
+        "correction": result.get("correction", []),
         "questions": [serialize_question(q) for q in questions],
     }
 
 @router.get("/")
-def get_all_quizzes(db: Session = Depends(get_db)):
+def get_all_quizzes(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Get all quizzes with their questions."""
     quizzes = db.query(Quiz).all()
-    return [serialize_quiz(q, db) for q in quizzes]
+    return [serialize_quiz(q, db, current_user) for q in quizzes]
 
 @router.post("/")
 def create_quiz(
@@ -98,16 +164,16 @@ def create_quiz(
         )
         db.add(question)
     db.commit()
-    return serialize_quiz(db_quiz, db)
+    return serialize_quiz(db_quiz, db, current_user)
 
 @router.get("/{quiz_id}")
-def get_quiz(quiz_id: int, db: Session = Depends(get_db)):
+def get_quiz(quiz_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Get a specific quiz with questions"""
     quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz not found")
     
-    return serialize_quiz(quiz, db)
+    return serialize_quiz(quiz, db, current_user)
 
 @router.put("/{quiz_id}")
 def update_quiz(
@@ -145,7 +211,7 @@ def update_quiz(
         ))
 
     db.commit()
-    return serialize_quiz(db_quiz, db)
+    return serialize_quiz(db_quiz, db, current_user)
 
 @router.delete("/{quiz_id}")
 def delete_quiz(
@@ -188,12 +254,26 @@ def submit_quiz_answer(
         questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
         total_points = sum(q.points or 1.0 for q in questions) or 1.0
         earned_points = 0.0
+        correct_answers = 0
+        correction = []
+
+        db.query(QuizAnswer).filter(
+            QuizAnswer.quiz_id == quiz_id,
+            QuizAnswer.student_id == student.id
+        ).delete()
 
         for question in questions:
             answer = str(submitted_answers.get(str(question.id), ""))
             is_correct = answer.strip().lower() == (question.correct_answer or "").strip().lower()
             points_earned = (question.points or 1.0) if is_correct else 0.0
             earned_points += points_earned
+            correct_answers += 1 if is_correct else 0
+            correction.append({
+                "questionId": str(question.id),
+                "isCorrect": is_correct,
+                "yourAnswer": answer,
+                "correctAnswer": question.correct_answer or ""
+            })
             db.add(QuizAnswer(
                 quiz_id=quiz_id,
                 student_id=student.id,
@@ -206,9 +286,15 @@ def submit_quiz_answer(
         score = round((earned_points / total_points) * 100)
     else:
         score = submission.get("score", 0)
+        questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
+        correct_answers = round((score / 100) * len(questions)) if questions else 0
+        correction = []
     
     return {
         "success": True,
         "score": score,
+        "correctAnswers": correct_answers,
+        "totalQuestions": len(questions),
+        "correction": correction,
         "message": f"Quiz submitted with score {score}"
     }

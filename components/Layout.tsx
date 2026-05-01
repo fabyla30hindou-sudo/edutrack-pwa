@@ -22,6 +22,7 @@ const Layout: React.FC<LayoutProps> = ({ children, role, currentPage, onNavigate
 
     if (role === UserRole.STUDENT) {
       items.splice(1, 0, { id: 'quizzes', label: 'Quiz', icon: ICONS.Quiz });
+      items.splice(2, 0, { id: 'results', label: 'Résultats', icon: ICONS.Stats });
     } else if (role === UserRole.TEACHER) {
       items.splice(1, 0, { id: 'attendance', label: 'Présence', icon: ICONS.Presence });
       items.splice(2, 0, { id: 'quizzes', label: 'Quiz', icon: ICONS.Quiz });

@@ -7,6 +7,7 @@ from app.models.user import User
 from app.models.teacher import Teacher
 from app.models.grade import Grade
 from app.models.attendance import Attendance
+from app.models.quiz import Quiz, QuizQuestion, QuizAnswer
 from app.routes.auth import get_current_user
 from app.schemas.schemas import StudentResponse
 from pydantic import BaseModel
@@ -185,6 +186,26 @@ def get_child_progress(
 
     grades = db.query(Grade).filter(Grade.student_id == student_id).order_by(Grade.graded_date.desc()).all()
     attendance = db.query(Attendance).filter(Attendance.student_id == student_id).order_by(Attendance.attendance_date.desc()).all()
+    quizzes = db.query(Quiz).all()
+    quiz_results = []
+    for quiz in quizzes:
+        questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz.id).all()
+        answers = db.query(QuizAnswer).filter(
+            QuizAnswer.quiz_id == quiz.id,
+            QuizAnswer.student_id == student_id
+        ).all()
+        if not answers:
+            continue
+        correct_answers = sum(1 for answer in answers if answer.is_correct == 1)
+        total_questions = len(questions)
+        quiz_results.append({
+            "id": quiz.id,
+            "title": quiz.title,
+            "chapter": quiz.description,
+            "score": round((correct_answers / total_questions) * 100) if total_questions else 0,
+            "correctAnswers": correct_answers,
+            "totalQuestions": total_questions
+        })
 
     return {
         "student": {
@@ -209,7 +230,8 @@ def get_child_progress(
                 "status": a.status,
                 "notes": a.notes
             } for a in attendance
-        ]
+        ],
+        "quiz_results": quiz_results
     }
 
 @router.get("/children/{student_id}/teachers")

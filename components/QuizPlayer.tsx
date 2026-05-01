@@ -1,20 +1,23 @@
 import React, { useState } from 'react';
-import { Quiz, Question } from '../types';
+import { Quiz, Question, QuizSubmissionResult } from '../types';
 
 interface QuizPlayerProps {
   quiz: Quiz;
   questions: Question[];
-  onFinish: (score: number, answers: Record<string, string>) => void;
+  onFinish: (score: number, answers: Record<string, string>) => Promise<QuizSubmissionResult> | QuizSubmissionResult;
   onCancel: () => void;
 }
 
 const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCancel }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<QuizSubmissionResult | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const hasQuestions = questions.length > 0;
   const currentQuestion = questions[currentIndex];
   const progress = hasQuestions ? ((currentIndex + 1) / questions.length) * 100 : 0;
+  const resultCorrection = result?.correction || [];
 
   const handleSelect = (option: string) => {
     if (!currentQuestion) return;
@@ -23,22 +26,29 @@ const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCa
 
   const calculateScore = () => {
     if (!hasQuestions) return 0;
-
     const correctAnswers = questions.filter((question) => {
       const selected = answers[question.id] || '';
       return selected.trim().toLowerCase() === question.correctOption.trim().toLowerCase();
     }).length;
-
     return Math.round((correctAnswers / questions.length) * 100);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(prev => prev + 1);
       return;
     }
 
-    onFinish(calculateScore(), answers);
+    setIsSubmitting(true);
+    try {
+      const submissionResult = await onFinish(calculateScore(), answers);
+      setResult({
+        ...submissionResult,
+        correction: submissionResult.correction || [],
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handlePrev = () => {
@@ -58,7 +68,7 @@ const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCa
         <div className="text-center">
           <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">{quiz.title}</h2>
           <p className="text-xs text-slate-400">
-            {hasQuestions ? `Question ${currentIndex + 1} sur ${questions.length}` : 'Aucune question'}
+            {result ? 'Terminé' : hasQuestions ? `Question ${currentIndex + 1} sur ${questions.length}` : 'Aucune question'}
           </p>
         </div>
         <div className="w-6" />
@@ -67,7 +77,7 @@ const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCa
       <div className="h-1 bg-slate-100 w-full">
         <div
           className="h-full bg-indigo-500 transition-all duration-300"
-          style={{ width: `${progress}%` }}
+          style={{ width: `${result ? 100 : progress}%` }}
         />
       </div>
 
@@ -78,11 +88,47 @@ const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCa
             <p className="text-sm font-medium text-slate-500">
               Ce quiz ne contient pas encore de questions. Ajoute au moins une question avant de le publier.
             </p>
-            <button
-              onClick={onCancel}
-              className="px-8 py-3 rounded-2xl bg-indigo-600 text-white text-xs font-black uppercase tracking-widest"
-            >
+            <button onClick={onCancel} className="px-8 py-3 rounded-2xl bg-indigo-600 text-white text-xs font-black uppercase tracking-widest">
               Retour
+            </button>
+          </div>
+        </div>
+      ) : result ? (
+        <div className="flex-1 px-6 py-12 overflow-y-auto">
+          <div className="max-w-2xl mx-auto text-center space-y-8">
+            <div className="space-y-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500">Résultat du quiz</p>
+              <h3 className="text-5xl font-black text-slate-800">{result.score}%</h3>
+              <p className="text-lg font-bold text-slate-600">
+                {result.correctAnswers} bonne(s) réponse(s) sur {result.totalQuestions}
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-3xl p-5 text-left space-y-3">
+              {resultCorrection.length === 0 && (
+                <div className="bg-white rounded-2xl p-4 border border-slate-100 text-center text-sm font-bold text-slate-400">
+                  Correction détaillée indisponible, mais ton score a bien été enregistré.
+                </div>
+              )}
+              {resultCorrection.map((item, index) => (
+                <div key={item.questionId} className="bg-white rounded-2xl p-4 border border-slate-100">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="font-black text-slate-700">Question {index + 1}</p>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${item.isCorrect ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {item.isCorrect ? 'Correct' : 'À revoir'}
+                    </span>
+                  </div>
+                  {!item.isCorrect && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      Ta réponse: <span className="font-bold">{item.yourAnswer || '-'}</span> - Réponse attendue: <span className="font-bold">{item.correctAnswer}</span>
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button onClick={onCancel} className="px-10 py-4 rounded-2xl bg-indigo-600 text-white text-xs font-black uppercase tracking-widest shadow-lg">
+              Retour aux quiz
             </button>
           </div>
         </div>
@@ -120,7 +166,7 @@ const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCa
           <div className="p-6 border-t border-slate-100 bg-white flex items-center justify-between safe-bottom">
             <button
               onClick={handlePrev}
-              disabled={currentIndex === 0}
+              disabled={currentIndex === 0 || isSubmitting}
               className={`px-6 py-3 rounded-xl font-medium transition-all ${
                 currentIndex === 0 ? 'text-slate-300' : 'text-slate-500 hover:bg-slate-50'
               }`}
@@ -130,14 +176,14 @@ const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, questions, onFinish, onCa
 
             <button
               onClick={handleNext}
-              disabled={!answers[currentQuestion.id]}
+              disabled={!answers[currentQuestion.id] || isSubmitting}
               className={`px-10 py-3 rounded-xl font-bold transition-all ${
-                !answers[currentQuestion.id]
+                !answers[currentQuestion.id] || isSubmitting
                   ? 'bg-slate-100 text-slate-400'
                   : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700'
               }`}
             >
-              {currentIndex === questions.length - 1 ? 'Terminer' : 'Suivant'}
+              {isSubmitting ? 'Correction...' : currentIndex === questions.length - 1 ? 'Terminer' : 'Suivant'}
             </button>
           </div>
         </>

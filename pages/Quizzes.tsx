@@ -161,9 +161,9 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
         quiz={activeQuiz}
         questions={activeQuiz.questions}
         onFinish={async (score, answers) => {
-          await API.quizzes.submitResult(activeQuiz.id, score, answers);
-          setActiveQuiz(null);
+          const result = await API.quizzes.submitResult(activeQuiz.id, score, answers);
           loadQuizzes();
+          return result;
         }}
         onCancel={() => setActiveQuiz(null)}
       />

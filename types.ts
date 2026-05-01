@@ -57,8 +57,19 @@ export interface Quiz {
   questionCount: number;
   status: 'pending' | 'completed' | 'published' | 'draft';
   averageScore?: number;
+  correctAnswers?: number;
+  answeredQuestions?: number;
+  attemptsCount?: number;
   questions: Question[];
   correction?: { questionId: string; isCorrect: boolean; yourAnswer: string; correctAnswer: string }[];
+}
+
+export interface QuizSubmissionResult {
+  success: boolean;
+  score: number;
+  correctAnswers: number;
+  totalQuestions: number;
+  correction: { questionId: string; isCorrect: boolean; yourAnswer: string; correctAnswer: string }[];
 }
 
 export interface Question {

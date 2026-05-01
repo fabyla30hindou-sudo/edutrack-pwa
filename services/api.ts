@@ -1,5 +1,5 @@
 import { Storage } from './storage';
-import { UserRole, Quiz, AttendanceSession, Message, User, School } from '../types';
+import { UserRole, Quiz, QuizSubmissionResult, AttendanceSession, Message, User, School } from '../types';
 
 // Utiliser l'IP du réseau local si disponible, sinon localhost
 const getApiBaseUrl = (): string => {
@@ -51,6 +51,10 @@ const normalizeQuiz = (q: any): Quiz => ({
   questionCount: q.questionCount || q.total_questions || (q.questions?.length ?? 0),
   status: q.status || 'published',
   averageScore: q.averageScore,
+  correctAnswers: q.correctAnswers || 0,
+  answeredQuestions: q.answeredQuestions || 0,
+  attemptsCount: q.attemptsCount || 0,
+  correction: q.correction || [],
   questions: (q.questions || []).map((qq: any) => ({
     id: String(qq.id),
     text: qq.question_text || qq.text || '',
@@ -70,6 +74,131 @@ const quizToBackend = (quiz: Quiz) => ({
     correct_answer: q.correctOption || '',
     points: 1.0,
   })),
+});
+
+const getLocalQuizResults = (): Record<string, QuizSubmissionResult> => {
+  const userId = Storage.getCurrentUser()?.id || 'anonymous';
+  const rows = Storage.getData<any>('edutrack_quiz_results');
+  return rows
+    .filter((row: any) => row.userId === userId)
+    .reduce((acc: Record<string, QuizSubmissionResult>, row: any) => {
+      acc[String(row.quizId)] = row.result;
+      return acc;
+    }, {});
+};
+
+const saveLocalQuizResult = (quizId: string, result: QuizSubmissionResult) => {
+  const userId = Storage.getCurrentUser()?.id || 'anonymous';
+  const rows = Storage.getData<any>('edutrack_quiz_results')
+    .filter((row: any) => !(row.userId === userId && String(row.quizId) === String(quizId)));
+  Storage.saveData('edutrack_quiz_results', [...rows, { userId, quizId, result, submittedAt: new Date().toISOString() }]);
+};
+
+const applyLocalQuizResults = (quizzes: Quiz[]): Quiz[] => {
+  const results = getLocalQuizResults();
+  return quizzes.map((quiz) => {
+    const result = results[quiz.id];
+    if (!result) return quiz;
+    return {
+      ...quiz,
+      status: 'completed',
+      averageScore: result.score,
+      correctAnswers: result.correctAnswers,
+      answeredQuestions: result.totalQuestions,
+      correction: result.correction,
+    };
+  });
+};
+
+const normalizeSubmissionResult = (
+  raw: any,
+  quiz: Quiz | undefined,
+  score: number,
+  answers?: Record<string, string>
+): QuizSubmissionResult => {
+  const questions = quiz?.questions || [];
+  const correction = Array.isArray(raw?.correction)
+    ? raw.correction
+    : questions.map(question => ({
+      questionId: question.id,
+      isCorrect: (answers?.[question.id] || '').trim().toLowerCase() === question.correctOption.trim().toLowerCase(),
+      yourAnswer: answers?.[question.id] || '',
+      correctAnswer: question.correctOption,
+    }));
+  const correctAnswers = raw?.correctAnswers ?? correction.filter(item => item.isCorrect).length;
+  const totalQuestions = raw?.totalQuestions ?? questions.length;
+
+  return {
+    success: Boolean(raw?.success ?? true),
+    score: Number(raw?.score ?? score),
+    correctAnswers,
+    totalQuestions,
+    correction,
+  };
+};
+
+const normalizeStudent = (student: any): any => ({
+  id: String(student.id),
+  userId: student.user_id ? String(student.user_id) : undefined,
+  name: student.full_name || student.name || `Élève #${student.id}`,
+  matricule: student.matricule || '',
+  schoolId: student.school_id ? String(student.school_id) : '',
+  className: student.class_name || student.class || '',
+  avatar: student.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name || student.name || student.id}`,
+});
+
+const normalizeGrade = (grade: any): any => ({
+  id: String(grade.id),
+  studentId: grade.student_id ? String(grade.student_id) : undefined,
+  subject: grade.subject || 'Matière',
+  grade: Number(grade.grade || 0),
+  comment: grade.comment || '',
+  date: grade.graded_date || grade.date || '',
+});
+
+const groupAttendanceRecords = (records: any[]): AttendanceSession[] => {
+  const grouped = new Map<string, AttendanceSession>();
+
+  records.forEach((record) => {
+    if (record.records) {
+      grouped.set(String(record.id), record);
+      return;
+    }
+
+    const date = record.attendance_date || record.date || new Date().toISOString().slice(0, 10);
+    const className = record.className || record.class_name || 'Classe';
+    const key = `${date}-${className}`;
+    const session = grouped.get(key) || {
+      id: key,
+      date,
+      className,
+      teacherName: record.teacherName || 'Enseignant',
+      records: [],
+    };
+
+    session.records.push({
+      studentId: String(record.student_id || record.studentId || record.id),
+      studentName: record.student_name || record.studentName || `Élève #${record.student_id || record.studentId || record.id}`,
+      status: record.status || 'present',
+      behavior: record.behavior || 'good',
+      observation: record.notes || record.observation || '',
+    });
+    grouped.set(key, session);
+  });
+
+  return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+};
+
+const normalizeNotification = (notification: any): any => ({
+  id: String(notification.id),
+  title: notification.title || 'Notification',
+  message: notification.message || notification.description || '',
+  description: notification.description || notification.message || '',
+  type: notification.type || 'system',
+  timestamp: notification.timestamp || notification.time || '',
+  time: notification.time || notification.timestamp || '',
+  is_read: Boolean(notification.is_read ?? notification.read ?? false),
+  read: Boolean(notification.read ?? notification.is_read ?? false),
 });
 
 // Small helper: fetch with timeout and consistent error handling
@@ -267,7 +396,7 @@ export const API = {
           role: backendToRole(u.role),
           avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.full_name}`,
           schoolId: u.school_id ? String(u.school_id) : 'sch-1',
-        }));
+}));
       } catch (error) {
         console.warn('Users list error, using local storage:', error);
         return Storage.getUsers();
@@ -333,24 +462,88 @@ export const API = {
     },
   },
 
+  students: {
+    list: async (): Promise<any[]> => {
+      try {
+        const response = await apiCall<any[]>('/students/');
+        return response.map(normalizeStudent);
+      } catch (error) {
+        console.warn('Students list error, using local users:', error);
+        return Storage.getUsers()
+          .filter((u: any) => u.role === UserRole.STUDENT || u.role === 'ELEVE')
+          .map((u: any) => normalizeStudent({
+            id: u.id,
+            full_name: u.name,
+            class_name: u.class,
+            school_id: u.schoolId,
+            matricule: u.matricule,
+            avatar: u.avatar,
+          }));
+      }
+    },
+
+    getGrades: async (studentId: string): Promise<any[]> => {
+      try {
+        const response = await apiCall<any[]>(`/students/${studentId}/grades`);
+        return response.map(normalizeGrade);
+      } catch (error) {
+        console.warn('Student grades error:', error);
+        return [];
+      }
+    },
+
+    getAttendance: async (studentId: string): Promise<any[]> => {
+      try {
+        return await apiCall<any[]>(`/students/${studentId}/attendance`);
+      } catch (error) {
+        console.warn('Student attendance error:', error);
+        return [];
+      }
+    },
+  },
+
+  grades: {
+    list: async (): Promise<any[]> => {
+      try {
+        const response = await apiCall<any[]>('/grades/');
+        return response.map(normalizeGrade);
+      } catch (error) {
+        console.warn('Grades list error:', error);
+        return [];
+      }
+    },
+
+    create: async (grade: { studentId: string; subject: string; grade: number; comment?: string }): Promise<any> => {
+      return normalizeGrade(await apiCall<any>('/grades/', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: Number(grade.studentId),
+          subject: grade.subject,
+          grade: grade.grade,
+          comment: grade.comment || '',
+        }),
+      }));
+    },
+  },
+
   quizzes: {
     list: async (): Promise<Quiz[]> => {
       try {
         const response = await apiCall<any[]>('/quizzes/');
-        return response.map(normalizeQuiz);
+        return applyLocalQuizResults(response.map(normalizeQuiz));
       } catch (error) {
         console.warn('Quizzes list error, using local storage:', error);
-        return Storage.getQuizzes();
+        return applyLocalQuizResults(Storage.getQuizzes());
       }
     },
 
     get: async (id: string): Promise<Quiz> => {
       try {
         const response = await apiCall<any>(`/quizzes/${id}`);
-        return normalizeQuiz(response);
+        return applyLocalQuizResults([normalizeQuiz(response)])[0];
       } catch (error) {
         const localQuiz = Storage.getQuizzes().find(q => q.id === id);
-        if (localQuiz) return localQuiz;
+        if (localQuiz) return applyLocalQuizResults([localQuiz])[0];
         throw error;
       }
     },
@@ -400,26 +593,48 @@ export const API = {
       }
     },
 
-    submitResult: async (quizId: string, score: number, answers?: Record<string, string>): Promise<{ success: boolean }> => {
+    submitResult: async (quizId: string, score: number, answers?: Record<string, string>): Promise<QuizSubmissionResult> => {
       try {
-        await apiCall(`/quizzes/${quizId}/submit`, {
+        const rawResult = await apiCall<any>(`/quizzes/${quizId}/submit`, {
           method: 'POST',
           body: JSON.stringify({ score, answers }),
         });
+        const quiz = Storage.getQuizzes().find(q => q.id === quizId);
+        const result = normalizeSubmissionResult(rawResult, quiz, score, answers);
+        saveLocalQuizResult(quizId, result);
 
         const quizzes = Storage.getQuizzes();
         const updated = quizzes.map(q =>
-          q.id === quizId ? { ...q, status: 'completed' as const, averageScore: score } : q
+          q.id === quizId ? { ...q, status: 'completed' as const, averageScore: result.score, correctAnswers: result.correctAnswers, answeredQuestions: result.totalQuestions, correction: result.correction } : q
         );
         Storage.saveData('edutrack_quizzes', updated);
-        return { success: true };
+        return result;
       } catch (error) {
+        const quiz = Storage.getQuizzes().find(q => q.id === quizId);
+        const questions = quiz?.questions || [];
+        const correctAnswers = questions.filter((question) => {
+          const answer = answers?.[question.id] || '';
+          return answer.trim().toLowerCase() === question.correctOption.trim().toLowerCase();
+        }).length;
+        const fallbackResult: QuizSubmissionResult = {
+          success: true,
+          score,
+          correctAnswers,
+          totalQuestions: questions.length,
+          correction: questions.map(question => ({
+            questionId: question.id,
+            isCorrect: (answers?.[question.id] || '').trim().toLowerCase() === question.correctOption.trim().toLowerCase(),
+            yourAnswer: answers?.[question.id] || '',
+            correctAnswer: question.correctOption,
+          })),
+        };
+        saveLocalQuizResult(quizId, fallbackResult);
         const quizzes = Storage.getQuizzes();
         const updated = quizzes.map(q =>
-          q.id === quizId ? { ...q, status: 'completed' as const, averageScore: score } : q
+          q.id === quizId ? { ...q, status: 'completed' as const, averageScore: score, correctAnswers, answeredQuestions: questions.length, correction: fallbackResult.correction } : q
         );
         Storage.saveData('edutrack_quizzes', updated);
-        return { success: true };
+        return fallbackResult;
       }
     },
   },
@@ -427,7 +642,8 @@ export const API = {
   attendance: {
     listSessions: async (): Promise<AttendanceSession[]> => {
       try {
-        return await apiCall<AttendanceSession[]>('/attendance/');
+        const response = await apiCall<any[]>('/attendance/');
+        return groupAttendanceRecords(response);
       } catch (error) {
         console.warn('Attendance list error, using local storage:', error);
         return Storage.getAttendanceSessions();
@@ -436,10 +652,14 @@ export const API = {
 
     saveSession: async (session: AttendanceSession): Promise<{ success: boolean }> => {
       try {
-        await apiCall('/attendance/', {
+        await Promise.all(session.records.map(record => apiCall('/attendance/', {
           method: 'POST',
-          body: JSON.stringify(session),
-        });
+          body: JSON.stringify({
+            student_id: Number(record.studentId),
+            status: record.status,
+            notes: record.observation || record.behavior,
+          }),
+        })));
         Storage.addAttendanceSession(session);
         return { success: true };
       } catch (error) {
@@ -464,6 +684,24 @@ export const API = {
       } catch (error) {
         console.warn('Messages history error, using local storage:', error);
         return Storage.getData<Message>('edutrack_messages');
+      }
+    },
+
+    getPrivateHistory: async (recipientId: string): Promise<Message[]> => {
+      try {
+        const messages = await apiCall<any[]>(`/messages/${recipientId}`);
+        return messages.map((m: any) => ({
+          id: String(m.id),
+          senderId: String(m.sender_id),
+          senderName: m.sender_name,
+          text: m.text,
+          timestamp: m.timestamp,
+          isMe: Boolean(m.is_me),
+          category: 'general',
+        }));
+      } catch (error) {
+        console.warn('Private messages history error:', error);
+        return Storage.getData<Message>('edutrack_messages').filter(m => m.category === 'academic' || m.category === 'general');
       }
     },
 
@@ -518,19 +756,21 @@ export const API = {
   notifications: {
     list: async (): Promise<any[]> => {
       try {
-        return await apiCall<any[]>('/notifications/');
+        const response = await apiCall<any[]>('/notifications/');
+        return response.map(normalizeNotification);
       } catch (error) {
         console.warn('Notifications list error, using local storage:', error);
-        return Storage.getData('edutrack_notifications');
+        return Storage.getData('edutrack_notifications').map(normalizeNotification);
       }
     },
 
     getAll: async (): Promise<any[]> => {
       try {
-        return await apiCall<any[]>('/notifications/');
+        const response = await apiCall<any[]>('/notifications/');
+        return response.map(normalizeNotification);
       } catch (error) {
         console.warn('Notifications getAll error, using local storage:', error);
-        return Storage.getData('edutrack_notifications') || [];
+        return (Storage.getData('edutrack_notifications') || []).map(normalizeNotification);
       }
     },
 

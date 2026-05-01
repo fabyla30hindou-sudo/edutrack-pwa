@@ -18,7 +18,7 @@ const Messaging: React.FC<MessagingProps> = ({ role, user, activeChild }) => {
 
   useEffect(() => {
     loadMessages();
-  }, []);
+  }, [role, recipientId]);
 
   useEffect(() => {
     if (role === UserRole.PARENT && activeChild?.id) {
@@ -37,7 +37,9 @@ const Messaging: React.FC<MessagingProps> = ({ role, user, activeChild }) => {
 
   const loadMessages = async () => {
     setIsLoading(true);
-    const data = await API.messaging.getHistory();
+    const data = role === UserRole.PARENT && recipientId
+      ? await API.messaging.getPrivateHistory(recipientId)
+      : await API.messaging.getHistory();
     setMessages(data);
     setIsLoading(false);
   };
@@ -65,6 +67,7 @@ const Messaging: React.FC<MessagingProps> = ({ role, user, activeChild }) => {
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">Contacter un enseignant:</span>
             <select value={recipientId} onChange={e => setRecipientId(e.target.value)} className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm">
+              {teachers.length === 0 && <option value="">Aucun enseignant disponible</option>}
               {teachers.map((t) => (
                 <option key={t.id} value={String(t.id)}>{t.full_name} - {t.subject}</option>
               ))}

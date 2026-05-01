@@ -50,6 +50,9 @@ const App: React.FC = () => {
     } else {
       setUser(session);
       setActiveChild(null);
+      if (session.role === UserRole.TEACHER && session.classes?.length) {
+        setActiveClass(session.classes[0]);
+      }
     }
   };
 
@@ -105,7 +108,7 @@ const App: React.FC = () => {
       case 'quizzes':
         return <Quizzes role={user.role} activeChild={activeChild} activeClass={activeClass} />;
       case 'results':
-        return <Results activeChild={activeChild} />;
+        return <Results role={user.role} user={user} activeChild={activeChild} />;
       case 'attendance':
         return user.role === UserRole.TEACHER ? <Attendance activeClass={activeClass} /> : <Dashboard role={user.role} user={user} activeChild={activeChild} setActiveChild={setActiveChild} activeClass={activeClass} setActiveClass={setActiveClass} />;
       case 'messaging':
