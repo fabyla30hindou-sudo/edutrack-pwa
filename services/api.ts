@@ -482,6 +482,17 @@ export const API = {
       }
     },
 
+    getByUserId: async (userId: string): Promise<any> => {
+      try {
+        const response = await apiCall<any[]>(`/students/`);
+        const student = response.find((s: any) => s.user_id === Number(userId) || s.user_id === userId);
+        return student ? normalizeStudent(student) : null;
+      } catch (error) {
+        console.warn('Student by user ID error:', error);
+        return null;
+      }
+    },
+
     getGrades: async (studentId: string): Promise<any[]> => {
       try {
         const response = await apiCall<any[]>(`/students/${studentId}/grades`);
@@ -523,6 +534,38 @@ export const API = {
           comment: grade.comment || '',
         }),
       }));
+    },
+
+    // Grade analytics
+    getStudentAnalytics: async (studentId: string): Promise<any> => {
+      try {
+        return await apiCall<any>(`/grades/analytics/student/${studentId}`);
+      } catch (error) {
+        console.warn('Grade analytics error:', error);
+        return null;
+      }
+    },
+
+    getClassAnalytics: async (className: string): Promise<any> => {
+      try {
+        return await apiCall<any>(`/grades/analytics/class/${className}`);
+      } catch (error) {
+        console.warn('Class grade analytics error:', error);
+        return null;
+      }
+    },
+
+    update: async (gradeId: string, grade: { subject?: string; grade?: number; comment?: string }): Promise<any> => {
+      return normalizeGrade(await apiCall<any>(`/grades/${gradeId}`, {
+        method: 'PUT',
+        body: JSON.stringify(grade),
+      }));
+    },
+
+    delete: async (gradeId: string): Promise<any> => {
+      return await apiCall<any>(`/grades/${gradeId}`, {
+        method: 'DELETE',
+      });
     },
   },
 
@@ -635,6 +678,25 @@ export const API = {
         );
         Storage.saveData('edutrack_quizzes', updated);
         return fallbackResult;
+      }
+    },
+
+    // Quiz analytics
+    getStudentAnalytics: async (studentId: string): Promise<any> => {
+      try {
+        return await apiCall<any>(`/quizzes/analytics/student/${studentId}`);
+      } catch (error) {
+        console.warn('Quiz analytics error:', error);
+        return null;
+      }
+    },
+
+    getClassAnalytics: async (className: string): Promise<any> => {
+      try {
+        return await apiCall<any>(`/quizzes/analytics/class/${className}`);
+      } catch (error) {
+        console.warn('Class quiz analytics error:', error);
+        return null;
       }
     },
   },

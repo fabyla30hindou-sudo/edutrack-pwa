@@ -13,6 +13,7 @@ import Notifications from './pages/Notifications';
 import Profile from './pages/Profile';
 import AdminDashboard from './pages/AdminDashboard';
 import Results from './pages/Results';
+import Grades from './pages/Grades';
 import AIChat from './components/AIChat';
 
 const mapChildToProfile = (c: any): StudentProfile => ({
@@ -109,6 +110,8 @@ const App: React.FC = () => {
         return <Quizzes role={user.role} activeChild={activeChild} activeClass={activeClass} />;
       case 'results':
         return <Results role={user.role} user={user} activeChild={activeChild} />;
+      case 'grades':
+        return <Grades role={user.role} user={user} activeChild={activeChild} />;
       case 'attendance':
         return user.role === UserRole.TEACHER ? <Attendance activeClass={activeClass} /> : <Dashboard role={user.role} user={user} activeChild={activeChild} setActiveChild={setActiveChild} activeClass={activeClass} setActiveClass={setActiveClass} />;
       case 'messaging':

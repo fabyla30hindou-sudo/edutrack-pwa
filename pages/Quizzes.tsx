@@ -17,13 +17,13 @@ const normalizeEditableQuiz = (quiz: Partial<Quiz>): Partial<Quiz> => ({
 });
 
 const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; activeClass?: string }> = ({ role, activeChild, activeClass }) => {
-  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
-  const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
-  const [editingQuiz, setEditingQuiz] = useState<Partial<Quiz> | null>(null);
-  const [statsQuiz, setStatsQuiz] = useState<Quiz | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isOpeningQuiz, setIsOpeningQuiz] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]); 
+  const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null); 
+  const [editingQuiz, setEditingQuiz] = useState<Partial<Quiz> | null>(null); 
+  const [statsQuiz, setStatsQuiz] = useState<Quiz | null>(null); 
+  const [isLoading, setIsLoading] = useState(true); 
+  const [isOpeningQuiz, setIsOpeningQuiz] = useState(false); 
+  const [error, setError] = useState<string | null>(null); 
 
   useEffect(() => {
     loadQuizzes();

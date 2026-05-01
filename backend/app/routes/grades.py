@@ -281,3 +281,204 @@ def delete_grade(
     db.delete(grade)
     db.commit()
     return {"success": True}
+
+
+# ===== GRADE ANALYTICS ENDPOINTS =====
+
+@router.get("/analytics/student/{student_id}")
+def get_student_grade_analytics(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get grade analytics for a specific student"""
+    role = (current_user.role or "").upper()
+    student = _student_or_404(db, student_id)
+
+    # Access control
+    if role == "STUDENT":
+        me = db.query(Student).filter(Student.user_id == current_user.id).first()
+        if not me or me.id != student_id:
+            raise HTTPException(status_code=403, detail="Unauthorized")
+    elif role == "PARENT":
+        _assert_parent_child_access(db, current_user, student_id)
+    elif role == "TEACHER":
+        teacher, allowed_classes = _teacher_scope(db, current_user)
+        if str(student.school_id) != str(teacher.school_id):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+    elif role == "ADMIN":
+        if str(student.school_id) != str(current_user.school_id):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+
+    grades = db.query(Grade).filter(Grade.student_id == student_id).order_by(Grade.graded_date).all()
+
+    if not grades:
+        return {
+            "student_id": student_id,
+            "overall_average": None,
+            "subjects": [],
+            "evolution": [],
+            "distribution": {}
+        }
+
+    # Group by subject
+    subject_grades: dict[str, list[Grade]] = {}
+    for g in grades:
+        if g.subject not in subject_grades:
+            subject_grades[g.subject] = []
+        subject_grades[g.subject].append(g)
+
+    # Calculate subject averages and evolution
+    subjects = []
+    for subject, subject_grade_list in subject_grades.items():
+        sorted_grades = sorted(subject_grade_list, key=lambda x: x.graded_date)
+        avg = sum(g.grade for g in subject_grade_list) / len(subject_grade_list)
+
+        # Evolution data (last 5 grades)
+        evolution = [
+            {"date": str(g.graded_date), "grade": g.grade}
+            for g in sorted_grades[-5:]
+        ]
+
+        subjects.append({
+            "subject": subject,
+            "average": round(avg, 2),
+            "count": len(subject_grade_list),
+            "latest_grade": sorted_grades[-1].grade,
+            "evolution": evolution
+        })
+
+    # Overall evolution (all subjects combined, sorted by date)
+    all_grades_sorted = sorted(grades, key=lambda x: x.graded_date)
+    evolution_overall = [
+        {"date": str(g.graded_date), "grade": g.grade, "subject": g.subject}
+        for g in all_grades_sorted[-10:]
+    ]
+
+    # Distribution
+    distribution = {"0-10": 0, "10-12": 0, "12-14": 0, "14-16": 0, "16-18": 0, "18-20": 0}
+    for g in grades:
+        if g.grade < 10:
+            distribution["0-10"] += 1
+        elif g.grade < 12:
+            distribution["10-12"] += 1
+        elif g.grade < 14:
+            distribution["12-14"] += 1
+        elif g.grade < 16:
+            distribution["14-16"] += 1
+        elif g.grade < 18:
+            distribution["16-18"] += 1
+        else:
+            distribution["18-20"] += 1
+
+    overall_avg = sum(g.grade for g in grades) / len(grades)
+
+    return {
+        "student_id": student_id,
+        "overall_average": round(overall_avg, 2),
+        "total_grades": len(grades),
+        "subjects": subjects,
+        "evolution": evolution_overall,
+        "distribution": distribution
+    }
+
+
+@router.get("/analytics/class/{class_name}")
+def get_class_grade_analytics(
+    class_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get grade analytics for a class"""
+    role = (current_user.role or "").upper()
+
+    if role not in ["TEACHER", "ADMIN", "SUPERADMIN"]:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # Get all students in the class
+    students = db.query(Student).filter(Student.class_name == class_name).all()
+
+    if role == "TEACHER":
+        teacher, allowed_classes = _teacher_scope(db, current_user)
+        if allowed_classes and class_name not in allowed_classes:
+            raise HTTPException(status_code=403, detail="Class not in your scope")
+
+    student_ids = [s.id for s in students]
+    if not student_ids:
+        return {
+            "class_name": class_name,
+            "student_count": 0,
+            "overall_average": None,
+            "subjects": [],
+            "top_students": [],
+            "distribution": {}
+        }
+
+    grades = db.query(Grade).filter(Grade.student_id.in_(student_ids)).all()
+
+    # Group by subject
+    subject_grades: dict[str, list[Grade]] = {}
+    for g in grades:
+        if g.subject not in subject_grades:
+            subject_grades[g.subject] = []
+        subject_grades[g.subject].append(g)
+
+    subjects = []
+    for subject, subject_grade_list in subject_grades.items():
+        avg = sum(g.grade for g in subject_grade_list) / len(subject_grade_list)
+        subjects.append({
+            "subject": subject,
+            "average": round(avg, 2),
+            "count": len(subject_grade_list)
+        })
+
+    # Student averages
+    student_averages: dict[int, float] = {}
+    for g in grades:
+        if g.student_id not in student_averages:
+            student_averages[g.student_id] = []
+        student_averages[g.student_id].append(g.grade)
+
+    top_students = []
+    for sid, grade_list in student_averages.items():
+        avg = sum(grade_list) / len(grade_list)
+        student = next((s for s in students if s.id == sid), None)
+        if student:
+            user = db.query(User).filter(User.id == student.user_id).first()
+            top_students.append({
+                "student_id": sid,
+                "student_name": user.full_name if user else "Unknown",
+                "average": round(avg, 2),
+                "grade_count": len(grade_list)
+            })
+
+    top_students.sort(key=lambda x: x["average"], reverse=True)
+    top_students = top_students[:5]
+
+    # Distribution
+    distribution = {"0-10": 0, "10-12": 0, "12-14": 0, "14-16": 0, "16-18": 0, "18-20": 0}
+    for g in grades:
+        if g.grade < 10:
+            distribution["0-10"] += 1
+        elif g.grade < 12:
+            distribution["10-12"] += 1
+        elif g.grade < 14:
+            distribution["12-14"] += 1
+        elif g.grade < 16:
+            distribution["14-16"] += 1
+        elif g.grade < 18:
+            distribution["16-18"] += 1
+        else:
+            distribution["18-20"] += 1
+
+    overall_avg = sum(g.grade for g in grades) / len(grades) if grades else 0
+
+    return {
+        "class_name": class_name,
+        "student_count": len(students),
+        "overall_average": round(overall_avg, 2),
+        "total_grades": len(grades),
+        "subjects": subjects,
+        "top_students": top_students,
+        "distribution": distribution
+    }
