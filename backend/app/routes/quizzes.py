@@ -23,22 +23,47 @@ class QuizCreate(BaseModel):
     duration_minutes: int = 30
     questions: list[QuestionCreate] = []
 
+def parse_options(raw_options: str | None) -> list[str]:
+    if not raw_options:
+        return []
+    try:
+        parsed = json.loads(raw_options)
+        return parsed if isinstance(parsed, list) else []
+    except json.JSONDecodeError:
+        return []
+
+def serialize_question(question: QuizQuestion) -> dict:
+    return {
+        "id": question.id,
+        "question_text": question.question_text,
+        "text": question.question_text,
+        "question_type": question.question_type,
+        "type": question.question_type,
+        "options": parse_options(question.options),
+        "correct_answer": question.correct_answer,
+        "correctOption": question.correct_answer,
+        "points": question.points,
+    }
+
+def serialize_quiz(quiz: Quiz, db: Session) -> dict:
+    questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz.id).all()
+    return {
+        "id": quiz.id,
+        "title": quiz.title,
+        "description": quiz.description,
+        "duration": quiz.duration_minutes,
+        "duration_minutes": quiz.duration_minutes,
+        "questionCount": len(questions),
+        "total_questions": len(questions),
+        "status": "published",
+        "questions": [serialize_question(q) for q in questions],
+    }
+
 @router.get("/")
 def get_all_quizzes(db: Session = Depends(get_db)):
-    """Get all quizzes"""
+    """Get all quizzes with their questions."""
     quizzes = db.query(Quiz).all()
-    return [
-        {
-            "id": q.id,
-            "title": q.title,
-            "description": q.description,
-            "duration": q.duration_minutes,
-            "questionCount": q.total_questions,
-            "status": "published",
-            "questions": []
-        }
-        for q in quizzes
-    ]
+    return [serialize_quiz(q, db) for q in quizzes]
 
 @router.post("/")
 def create_quiz(
@@ -73,14 +98,7 @@ def create_quiz(
         )
         db.add(question)
     db.commit()
-    
-    return {
-        "id": db_quiz.id,
-        "title": db_quiz.title,
-        "description": db_quiz.description,
-        "duration": db_quiz.duration_minutes,
-        "questionCount": db_quiz.total_questions
-    }
+    return serialize_quiz(db_quiz, db)
 
 @router.get("/{quiz_id}")
 def get_quiz(quiz_id: int, db: Session = Depends(get_db)):
@@ -89,24 +107,7 @@ def get_quiz(quiz_id: int, db: Session = Depends(get_db)):
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz not found")
     
-    questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
-    return {
-        "id": quiz.id,
-        "title": quiz.title,
-        "description": quiz.description,
-        "duration": quiz.duration_minutes,
-        "questionCount": len(questions),
-        "questions": [
-            {
-                "id": q.id,
-                "text": q.question_text,
-                "type": q.question_type,
-                "options": json.loads(q.options) if q.options else [],
-                "correctOption": q.correct_answer
-            }
-            for q in questions
-        ]
-    }
+    return serialize_quiz(quiz, db)
 
 @router.put("/{quiz_id}")
 def update_quiz(
@@ -116,16 +117,35 @@ def update_quiz(
     current_user: User = Depends(get_current_user)
 ):
     """Update a quiz"""
-    db_quiz = db.query(Quiz).filter(Quiz.id == quiz_id, Quiz.created_by == current_user.id).first()
+    query = db.query(Quiz).filter(Quiz.id == quiz_id)
+    if current_user.role.upper() not in ["ADMIN", "SUPERADMIN"]:
+        query = query.filter(Quiz.created_by == current_user.id)
+    db_quiz = query.first()
     if not db_quiz:
         raise HTTPException(status_code=404, detail="Quiz not found")
     
     db_quiz.title = quiz.title
     db_quiz.description = quiz.description
     db_quiz.duration_minutes = quiz.duration_minutes
+    db_quiz.total_questions = len(quiz.questions)
+
+    db.query(QuizAnswer).filter(QuizAnswer.quiz_id == quiz_id).delete()
+    old_questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
+    for old_question in old_questions:
+        db.delete(old_question)
+
+    for q in quiz.questions:
+        db.add(QuizQuestion(
+            quiz_id=db_quiz.id,
+            question_text=q.question_text,
+            question_type=q.question_type,
+            options=json.dumps(q.options) if q.options else "",
+            correct_answer=q.correct_answer,
+            points=q.points
+        ))
+
     db.commit()
-    
-    return {"success": True, "id": db_quiz.id}
+    return serialize_quiz(db_quiz, db)
 
 @router.delete("/{quiz_id}")
 def delete_quiz(
@@ -134,10 +154,15 @@ def delete_quiz(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a quiz"""
-    quiz = db.query(Quiz).filter(Quiz.id == quiz_id, Quiz.created_by == current_user.id).first()
+    query = db.query(Quiz).filter(Quiz.id == quiz_id)
+    if current_user.role.upper() not in ["ADMIN", "SUPERADMIN"]:
+        query = query.filter(Quiz.created_by == current_user.id)
+    quiz = query.first()
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz not found")
     
+    db.query(QuizAnswer).filter(QuizAnswer.quiz_id == quiz_id).delete()
+    db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).delete()
     db.delete(quiz)
     db.commit()
     return {"success": True}
@@ -158,7 +183,29 @@ def submit_quiz_answer(
     if not student:
         raise HTTPException(status_code=404, detail="Student profile not found")
     
-    score = submission.get("score", 0)
+    submitted_answers = submission.get("answers")
+    if isinstance(submitted_answers, dict):
+        questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
+        total_points = sum(q.points or 1.0 for q in questions) or 1.0
+        earned_points = 0.0
+
+        for question in questions:
+            answer = str(submitted_answers.get(str(question.id), ""))
+            is_correct = answer.strip().lower() == (question.correct_answer or "").strip().lower()
+            points_earned = (question.points or 1.0) if is_correct else 0.0
+            earned_points += points_earned
+            db.add(QuizAnswer(
+                quiz_id=quiz_id,
+                student_id=student.id,
+                question_id=question.id,
+                student_answer=answer,
+                is_correct=1 if is_correct else 0,
+                points_earned=points_earned
+            ))
+        db.commit()
+        score = round((earned_points / total_points) * 100)
+    else:
+        score = submission.get("score", 0)
     
     return {
         "success": True,

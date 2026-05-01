@@ -1,0 +1,99 @@
+Table,Champ,Type,Nullable,Description,Contrainte
+users,id,Integer,Non,Clé primaire auto-incrémentée,PK
+users,email,String,Non,Email unique par établissement,Index
+users,hashed_password,String,Non,Mot de passe haché (bcrypt),
+users,full_name,String,Non,Nom complet de l'utilisateur,
+users,school_id,String,Non,ID de l'établissement,FK→schools.id
+users,role,String,Non,"Rôle : student, teacher, admin, parent",Index
+users,is_active,Boolean,Oui,Statut actif (défaut: true),Default: True
+users,created_at,DateTime,Oui,Date de création,Default: utcnow
+users,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+schools,id,Integer,Non,Clé primaire,PK
+schools,name,String,Non,Nom de l'école,Unique, Index
+schools,is_active,Boolean,Oui,Statut actif,Default: True
+schools,created_at,DateTime,Oui,Date de création,Default: utcnow
+schools,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+students,id,Integer,Non,Clé primaire,PK
+students,user_id,Integer,Non,Lien vers utilisateur,FK→users.id, Unique
+students,matricule,String,Non,Numéro matricule unique,Unique, Index
+students,school_id,String,Non,Établissement,FK→schools.id, Index
+students,class_name,String,Non,Classe (6eme, 5eme, etc.),Index
+students,created_at,DateTime,Oui,Date de création,Default: utcnow
+students,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+teachers,id,Integer,Non,Clé primaire,PK
+teachers,user_id,Integer,Non,Lien vers utilisateur,FK→users.id, Unique
+teachers,school_id,String,Non,Établissement,FK→schools.id, Index
+teachers,subject,String,Non,Matière enseignée,Index
+teachers,classes,Text,Oui,Liste JSON des classes,
+teachers,created_at,DateTime,Oui,Date de création,Default: utcnow
+teachers,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+admins,id,Integer,Non,Clé primaire,PK
+admins,user_id,Integer,Non,Lien vers utilisateur,FK→users.id, Unique
+admins,school_id,String,Non,Établissement,FK→schools.id, Index
+admins,created_at,DateTime,Oui,Date de création,Default: utcnow
+admins,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+parents,id,Integer,Non,Clé primaire,PK
+parents,user_id,Integer,Non,Lien vers utilisateur,FK→users.id, Unique
+parents,created_at,DateTime,Oui,Date de création,Default: utcnow
+parents,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+superadmins,id,Integer,Non,Clé primaire,PK
+superadmins,user_id,Integer,Non,Lien vers utilisateur,FK→users.id, Unique
+superadmins,created_at,DateTime,Oui,Date de création,Default: utcnow
+superadmins,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+grades,id,Integer,Non,Clé primaire,PK
+grades,student_id,Integer,Non,Élève,FK→students.id
+grades,subject,String,Non,Matière,
+grades,grade,Float,Non,Note (sur 20),
+grades,teacher_id,Integer,Non,Enseignant évaluateur,FK→users.id
+grades,comment,String,Oui,Commentaire,
+grades,graded_date,DateTime,Oui,Date de l'évaluation,Default: utcnow
+grades,created_at,DateTime,Oui,Date de création,Default: utcnow
+grades,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+attendance,id,Integer,Non,Clé primaire,PK
+attendance,student_id,Integer,Non,Élève,FK→students.id
+attendance,attendance_date,Date,Oui,Date de présence,Default: today
+attendance,status,String,Non,"Statut : present, absent, late, justified",
+attendance,notes,String,Oui,Notes complémentaires,
+attendance,created_at,DateTime,Oui,Date de création,Default: utcnow
+attendance,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+quizzes,id,Integer,Non,Clé primaire,PK
+quizzes,title,String,Non,Titre du quiz,Index
+quizzes,description,Text,Oui,Description,
+quizzes,created_by,Integer,Non,Createur (enseignant),FK→users.id
+quizzes,total_questions,Integer,Oui,Nombre de questions,Default: 0
+quizzes,duration_minutes,Integer,Oui,Durée (défaut: 30 min),Default: 30
+quizzes,created_at,DateTime,Oui,Date de création,Default: utcnow
+quizzes,updated_at,DateTime,Oui,Date de mise à jour,Default: utcnow
+quiz_questions,id,Integer,Non,Clé primaire,PK
+quiz_questions,quiz_id,Integer,Non,Quiz parent,FK→quizzes.id
+quiz_questions,question_text,Text,Non,Texte de la question,
+quiz_questions,question_type,String,Non,"Type : multiple_choice, true_false, short_answer",
+quiz_questions,options,String,Oui,Options JSON (pour choix multiple),
+quiz_questions,correct_answer,String,Non,Réponse correcte,
+quiz_questions,points,Float,Oui,Points (défaut: 1.0),Default: 1.0
+quiz_questions,created_at,DateTime,Oui,Date de création,Default: utcnow
+quiz_answers,id,Integer,Non,Clé primaire,PK
+quiz_answers,quiz_id,Integer,Non,Quiz,FK→quizzes.id
+quiz_answers,student_id,Integer,Non,Élève,FK→students.id
+quiz_answers,question_id,Integer,Non,Question,FK→quiz_questions.id
+quiz_answers,student_answer,String,Non,Réponse de l'élève,
+quiz_answers,is_correct,Integer,Oui,0, 1, ou null,
+quiz_answers,points_earned,Float,Oui,Points gagnés,Default: 0.0
+quiz_answers,submitted_at,DateTime,Oui,Date de soumission,Default: utcnow
+messages,id,Integer,Non,Clé primaire,PK
+messages,sender_id,Integer,Non,Expéditeur,FK→users.id
+messages,sender_name,String,Non,Nom de l'expéditeur,
+messages,recipient_id,Integer,Oui,Destinataire (nullable),FK→users.id
+messages,text,String,Non,Contenu du message,
+messages,category,String,Oui,"Catégorie : general, support, private",Default: general
+messages,timestamp,DateTime,Oui,Horodatage,Default: utcnow
+messages,is_read,Boolean,Oui,Lu (défaut: false),Default: False
+notifications,id,Integer,Non,Clé primaire,PK
+notifications,user_id,Integer,Non,Utilisateur cible,FK→users.id
+notifications,title,String,Non,Titre,
+notifications,message,Text,Non,Contenu,
+notifications,type,String,Oui,"Type : INFO, WARNING, ERROR, SUCCESS",Default: INFO
+notifications,timestamp,DateTime,Oui,Horodatage,Default: utcnow
+notifications,is_read,Boolean,Oui,Lu (défaut: false),Default: False
+parent_student,parent_id,Integer,Non,Parent,FK→parents.id
+parent_student,student_id,Integer,Non,Élève,FK→students.id

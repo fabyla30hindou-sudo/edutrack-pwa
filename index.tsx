@@ -30,6 +30,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+
 // Test backend connection on app startup (catch errors to avoid unhandled rejections)
 runAllTests().catch(err => console.error('runAllTests error:', err));
 

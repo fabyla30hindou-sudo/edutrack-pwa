@@ -1,7 +1,17 @@
 import { Storage } from './storage';
 import { UserRole, Quiz, AttendanceSession, Message, User, School } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Utiliser l'IP du réseau local si disponible, sinon localhost
+const getApiBaseUrl = (): string => {
+  // Priorité à la variable d'environnement
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // Sinon utiliser localhost pour développement local
+  return 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const backendToRole = (rawRole: string): UserRole => {
   const role = (rawRole || '').toLowerCase();
@@ -19,6 +29,48 @@ const roleToBackend = (role: UserRole): string => {
   if (role === UserRole.SUPERADMIN) return 'SUPERADMIN';
   return 'STUDENT';
 };
+
+const parseQuestionOptions = (options: unknown): string[] => {
+  if (Array.isArray(options)) return options.map(String);
+  if (typeof options === 'string') {
+    try {
+      const parsed = JSON.parse(options);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+const normalizeQuiz = (q: any): Quiz => ({
+  id: String(q.id),
+  title: q.title || 'Quiz sans titre',
+  chapter: q.description || q.chapter || '',
+  duration: q.duration || q.duration_minutes || 30,
+  questionCount: q.questionCount || q.total_questions || (q.questions?.length ?? 0),
+  status: q.status || 'published',
+  averageScore: q.averageScore,
+  questions: (q.questions || []).map((qq: any) => ({
+    id: String(qq.id),
+    text: qq.question_text || qq.text || '',
+    options: parseQuestionOptions(qq.options),
+    correctOption: qq.correct_answer || qq.correctOption || '',
+  })),
+});
+
+const quizToBackend = (quiz: Quiz) => ({
+  title: quiz.title,
+  description: quiz.chapter || '',
+  duration_minutes: quiz.duration || 30,
+  questions: (quiz.questions || []).map((q) => ({
+    question_text: q.text,
+    question_type: 'multiple_choice',
+    options: q.options || [],
+    correct_answer: q.correctOption || '',
+    points: 1.0,
+  })),
+});
 
 // Small helper: fetch with timeout and consistent error handling
 async function fetchWithTimeout(input: RequestInfo, init?: RequestInit, timeout = 10000) {
@@ -284,22 +336,37 @@ export const API = {
   quizzes: {
     list: async (): Promise<Quiz[]> => {
       try {
-        return await apiCall<Quiz[]>('/quizzes/');
+        const response = await apiCall<any[]>('/quizzes/');
+        return response.map(normalizeQuiz);
       } catch (error) {
         console.warn('Quizzes list error, using local storage:', error);
         return Storage.getQuizzes();
       }
     },
 
+    get: async (id: string): Promise<Quiz> => {
+      try {
+        const response = await apiCall<any>(`/quizzes/${id}`);
+        return normalizeQuiz(response);
+      } catch (error) {
+        const localQuiz = Storage.getQuizzes().find(q => q.id === id);
+        if (localQuiz) return localQuiz;
+        throw error;
+      }
+    },
+
     create: async (quiz: Quiz): Promise<Quiz> => {
       try {
-        const response = await apiCall<Quiz>('/quizzes/', {
+        const response = await apiCall<any>('/quizzes/', {
           method: 'POST',
-          body: JSON.stringify(quiz),
+          body: JSON.stringify(quizToBackend(quiz)),
         });
-        Storage.addQuiz(response);
-        return response;
+
+        const createdQuiz = normalizeQuiz(response);
+        Storage.addQuiz(createdQuiz);
+        return createdQuiz;
       } catch (error) {
+        console.error('Quiz creation error:', error);
         Storage.addQuiz(quiz);
         return quiz;
       }
@@ -307,13 +374,16 @@ export const API = {
 
     update: async (quiz: Quiz): Promise<Quiz> => {
       try {
-        const response = await apiCall<Quiz>(`/quizzes/${quiz.id}`, {
+        const response = await apiCall<any>(`/quizzes/${quiz.id}`, {
           method: 'PUT',
-          body: JSON.stringify(quiz),
+          body: JSON.stringify(quizToBackend(quiz)),
         });
-        Storage.updateQuiz(response);
-        return response;
+
+        const updatedQuiz = normalizeQuiz(response);
+        Storage.updateQuiz(updatedQuiz);
+        return updatedQuiz;
       } catch (error) {
+        console.error('Quiz update error:', error);
         Storage.updateQuiz(quiz);
         return quiz;
       }
@@ -330,11 +400,11 @@ export const API = {
       }
     },
 
-    submitResult: async (quizId: string, score: number): Promise<{ success: boolean }> => {
+    submitResult: async (quizId: string, score: number, answers?: Record<string, string>): Promise<{ success: boolean }> => {
       try {
         await apiCall(`/quizzes/${quizId}/submit`, {
           method: 'POST',
-          body: JSON.stringify({ score }),
+          body: JSON.stringify({ score, answers }),
         });
 
         const quizzes = Storage.getQuizzes();

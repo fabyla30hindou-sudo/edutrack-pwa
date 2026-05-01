@@ -16,8 +16,9 @@ import uvicorn
 
 if __name__ == "__main__":
     print("Demarrage du serveur EduTrack Backend...")
-    print("Adresse: http://127.0.0.1:8000")
+    print("Adresse: http://0.0.0.0:8000")
+    print("Accessible sur le reseau local: http://<IP>:8000")
     print("Documentation: http://127.0.0.1:8000/docs")
     print("Arret: CTRL+C\n")
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
