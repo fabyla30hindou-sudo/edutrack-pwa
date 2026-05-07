@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { User, UserRole, StudentProfile } from '../types';
 import { API } from '../services/api';
 
@@ -6,16 +6,19 @@ interface GradesPageProps {
   role: UserRole;
   user: User;
   activeChild: StudentProfile | null;
+  activeClass: string;
 }
 
 interface GradeEntry {
   id: number;
-  student_id: number;
-  student_name: string;
+  student_id?: number;
+  studentId?: string;
+  student_name?: string;
   subject: string;
   grade: number;
   comment: string;
-  graded_date: string;
+  graded_date?: string;
+  date?: string;
 }
 
 interface StudentAnalytics {
@@ -33,19 +36,28 @@ interface StudentAnalytics {
   distribution: Record<string, number>;
 }
 
-const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
+interface TeacherGradeDraft {
+  studentId: string;
+  studentName: string;
+  grade: string;
+  comment: string;
+}
+
+const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild, activeClass }) => {
   const [grades, setGrades] = useState<GradeEntry[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedStudent, setSelectedStudent] = useState<number | null>(null);
   const [analytics, setAnalytics] = useState<StudentAnalytics | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [newGrade, setNewGrade] = useState({ studentId: '', subject: '', grade: '', comment: '' });
-  const [subjects] = useState(['Mathématiques', 'Français', 'Anglais', 'Histoire-Géo', 'Sciences', 'Physique-Chimie', 'EPS', 'Art', 'Musique']);
+  const [teacherDrafts, setTeacherDrafts] = useState<TeacherGradeDraft[]>([]);
+  const [isSavingBatch, setIsSavingBatch] = useState(false);
+
+  const teacherSubject = user.subject?.trim() || 'Matiere';
 
   useEffect(() => {
     loadData();
-  }, [role, activeChild]);
+  }, [role, activeChild, activeClass, user.id]);
 
   const loadData = async () => {
     setLoading(true);
@@ -53,7 +65,7 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
       if (role === UserRole.TEACHER || role === UserRole.ADMIN || role === UserRole.SUPERADMIN) {
         const [gradesData, studentsData] = await Promise.all([
           API.grades.list().catch(() => []),
-          API.students.list().catch(() => [])
+          API.students.list().catch(() => []),
         ]);
         setGrades(gradesData);
         setStudents(studentsData);
@@ -78,23 +90,34 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
     }
   };
 
-  const handleCreateGrade = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newGrade.studentId || !newGrade.subject || !newGrade.grade) return;
+  const teacherStudents = useMemo(() => {
+    if (role !== UserRole.TEACHER) return [];
+    return students.filter((student) => student.className === activeClass);
+  }, [students, role, activeClass]);
 
-    try {
-      await API.grades.create({
-        studentId: newGrade.studentId,
-        subject: newGrade.subject,
-        grade: Number(newGrade.grade),
-        comment: newGrade.comment
-      });
-      setNewGrade({ studentId: '', subject: '', grade: '', comment: '' });
-      loadData();
-    } catch (error) {
-      console.error('Error creating grade:', error);
-    }
-  };
+  const visibleGrades = useMemo(() => {
+    if (role !== UserRole.TEACHER) return grades;
+
+    const validIds = new Set(teacherStudents.map((student) => String(student.id)));
+    return grades
+      .filter((grade) => grade.subject === teacherSubject && validIds.has(String(grade.student_id || grade.studentId)))
+      .map((grade) => ({
+        ...grade,
+        student_name: grade.student_name || teacherStudents.find((student) => String(student.id) === String(grade.student_id || grade.studentId))?.name || `Eleve #${grade.student_id || grade.studentId}`,
+      }));
+  }, [grades, role, teacherStudents, teacherSubject]);
+
+  useEffect(() => {
+    if (role !== UserRole.TEACHER) return;
+    setTeacherDrafts(
+      teacherStudents.map((student) => ({
+        studentId: String(student.id),
+        studentName: student.name,
+        grade: '',
+        comment: '',
+      }))
+    );
+  }, [role, teacherStudents, activeClass]);
 
   const handleViewAnalytics = async (studentId: number) => {
     setSelectedStudent(studentId);
@@ -104,6 +127,66 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
       setShowAnalytics(true);
     } catch (error) {
       console.error('Error loading analytics:', error);
+    }
+  };
+
+  const handleTeacherDraftChange = (studentId: string, field: 'grade' | 'comment', value: string) => {
+    setTeacherDrafts((current) =>
+      current.map((draft) => (draft.studentId === studentId ? { ...draft, [field]: value } : draft))
+    );
+  };
+
+  const handleTeacherBatchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const filledRows = teacherDrafts.filter((draft) => draft.grade.trim() !== '');
+    if (!filledRows.length) return;
+
+    setIsSavingBatch(true);
+    try {
+      await Promise.all(
+        filledRows.map((draft) =>
+          API.grades.create({
+            studentId: draft.studentId,
+            subject: teacherSubject,
+            grade: Number(draft.grade),
+            comment: draft.comment.trim(),
+          })
+        )
+      );
+      setTeacherDrafts((current) => current.map((draft) => ({ ...draft, grade: '', comment: '' })));
+      await loadData();
+    } catch (error) {
+      console.error('Error creating batch grades:', error);
+    } finally {
+      setIsSavingBatch(false);
+    }
+  };
+
+  const handleEditGrade = async (grade: GradeEntry) => {
+    const nextGradeRaw = window.prompt('Nouvelle note /20', String(grade.grade));
+    if (nextGradeRaw === null) return;
+    const nextGrade = Number(nextGradeRaw);
+    if (Number.isNaN(nextGrade) || nextGrade < 0 || nextGrade > 20) return;
+    const nextComment = window.prompt('Commentaire', grade.comment || '') ?? grade.comment ?? '';
+
+    try {
+      await API.grades.update(String(grade.id), {
+        grade: nextGrade,
+        comment: nextComment,
+      });
+      await loadData();
+    } catch (error) {
+      console.error('Error updating grade:', error);
+    }
+  };
+
+  const handleDeleteGrade = async (gradeId: number) => {
+    if (!window.confirm('Supprimer cette note ?')) return;
+    try {
+      await API.grades.delete(String(gradeId));
+      await loadData();
+    } catch (error) {
+      console.error('Error deleting grade:', error);
     }
   };
 
@@ -117,7 +200,7 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
 
   const renderDistributionChart = (distribution: Record<string, number>) => {
     const total = Object.values(distribution).reduce((a, b) => a + b, 0);
-    if (total === 0) return <p className="text-slate-400 text-sm">Aucune donnée</p>;
+    if (total === 0) return <p className="text-slate-400 text-sm">Aucune donnee</p>;
 
     return (
       <div className="flex items-end gap-1 h-32">
@@ -139,7 +222,7 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
   };
 
   const renderEvolutionChart = (evolution: { date: string; grade: number }[]) => {
-    if (!evolution || evolution.length === 0) return <p className="text-slate-400 text-sm">Aucune évolution</p>;
+    if (!evolution || evolution.length === 0) return <p className="text-slate-400 text-sm">Aucune evolution</p>;
 
     const maxGrade = 20;
     const points = evolution.map(e => ({ x: e.date, y: e.grade }));
@@ -147,11 +230,9 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
     return (
       <div className="relative h-40">
         <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-          {/* Grid lines */}
           {[0, 5, 10, 15, 20].map(y => (
             <line key={y} x1="0" y1={100 - y * 5} x2="100" y2={100 - y * 5} stroke="#e2e8f0" strokeWidth="0.5" />
           ))}
-          {/* Line chart */}
           {points.length > 1 && (
             <polyline
               fill="none"
@@ -160,7 +241,6 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
               points={points.map((p, i) => `${(i / (points.length - 1)) * 100},${100 - (p.y / maxGrade) * 100}`).join(' ')}
             />
           )}
-          {/* Points */}
           {points.map((p, i) => (
             <circle
               key={i}
@@ -188,7 +268,6 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
     );
   }
 
-  // For students and parents - show analytics view
   if (role === UserRole.STUDENT || role === UserRole.PARENT) {
     return (
       <div className="space-y-6">
@@ -200,10 +279,9 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
 
         {analytics && (
           <>
-            {/* Overall average */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-white p-6 rounded-3xl border border-slate-100">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Moyenne Générale</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Moyenne Generale</p>
                 <p className="text-4xl font-black text-slate-800 mt-2">{analytics.overall_average || '-'}/20</p>
               </div>
               <div className="bg-white p-6 rounded-3xl border border-slate-100">
@@ -216,10 +294,9 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
               </div>
             </div>
 
-            {/* Subject averages */}
             {analytics.subjects && analytics.subjects.length > 0 && (
               <div className="bg-white p-6 rounded-3xl border border-slate-100">
-                <h3 className="font-black mb-4">Moyennes par Matière</h3>
+                <h3 className="font-black mb-4">Moyennes par Matiere</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {analytics.subjects.map((subj: any) => (
                     <div key={subj.subject} className="bg-slate-50 p-4 rounded-2xl">
@@ -232,23 +309,21 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
               </div>
             )}
 
-            {/* Evolution chart */}
             {analytics.evolution && analytics.evolution.length > 0 && (
               <div className="bg-white p-6 rounded-3xl border border-slate-100">
-                <h3 className="font-black mb-4">Évolution des Notes</h3>
+                <h3 className="font-black mb-4">Evolution des Notes</h3>
                 {renderEvolutionChart(analytics.evolution)}
               </div>
             )}
 
-            {/* Recent grades */}
             <div className="bg-white p-6 rounded-3xl border border-slate-100">
-              <h3 className="font-black mb-4">Notes Récentes</h3>
+              <h3 className="font-black mb-4">Notes Recentes</h3>
               <div className="space-y-2">
                 {grades.slice(0, 10).map((grade) => (
                   <div key={grade.id} className="flex justify-between items-center gap-4 text-sm border-b border-slate-100 pb-2">
                     <div>
                       <span className="font-medium">{grade.subject}</span>
-                      <span className="text-slate-400 text-xs ml-2">{grade.graded_date?.slice(0, 10)}</span>
+                      <span className="text-slate-400 text-xs ml-2">{(grade.graded_date || grade.date || '').slice(0, 10)}</span>
                     </div>
                     <span className={`px-3 py-1 rounded-full font-black ${getGradeColor(grade.grade)}`}>
                       {grade.grade}/20
@@ -270,77 +345,166 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
     );
   }
 
-  // For teachers - show management view
+  if (role === UserRole.TEACHER) {
+    return (
+      <div className="space-y-6">
+        <header className="space-y-3">
+          <h2 className="text-3xl font-black text-slate-800 tracking-tight">Gestion des Notes</h2>
+          <div className="flex flex-wrap gap-3">
+            <span className="px-4 py-2 rounded-2xl bg-indigo-50 text-indigo-600 text-xs font-black uppercase tracking-widest">
+              Matiere: {teacherSubject}
+            </span>
+            <span className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-xs font-black uppercase tracking-widest">
+              Classe: {activeClass}
+            </span>
+          </div>
+        </header>
+
+        <div className="bg-white p-6 rounded-3xl border border-slate-100">
+          <h3 className="font-black mb-2">Saisie des notes de la classe</h3>
+          <p className="text-sm text-slate-500 mb-6">
+            Remplis uniquement les notes des eleves de {activeClass} pour la matiere {teacherSubject}.
+          </p>
+
+          <form onSubmit={handleTeacherBatchSubmit} className="space-y-4">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-xs font-black uppercase text-slate-400">
+                    <th className="pb-3">Eleve</th>
+                    <th className="pb-3">Classe</th>
+                    <th className="pb-3">Matiere</th>
+                    <th className="pb-3">Note /20</th>
+                    <th className="pb-3">Commentaire</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teacherDrafts.map((draft) => (
+                    <tr key={draft.studentId} className="border-t border-slate-100">
+                      <td className="py-3 font-bold text-slate-700">{draft.studentName}</td>
+                      <td className="py-3 text-sm text-slate-500">{activeClass}</td>
+                      <td className="py-3 text-sm text-slate-500">{teacherSubject}</td>
+                      <td className="py-3">
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          step="0.5"
+                          placeholder="Ex: 14"
+                          className="w-full p-3 border border-slate-200 rounded-xl font-medium"
+                          value={draft.grade}
+                          onChange={(e) => handleTeacherDraftChange(draft.studentId, 'grade', e.target.value)}
+                        />
+                      </td>
+                      <td className="py-3">
+                        <input
+                          type="text"
+                          placeholder="Commentaire"
+                          className="w-full p-3 border border-slate-200 rounded-xl font-medium"
+                          value={draft.comment}
+                          onChange={(e) => handleTeacherDraftChange(draft.studentId, 'comment', e.target.value)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                  {teacherDrafts.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                        Aucun eleve trouve dans cette classe.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={isSavingBatch || teacherDrafts.length === 0}
+                className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-black hover:bg-indigo-700 transition-colors disabled:opacity-50"
+              >
+                {isSavingBatch ? 'Enregistrement...' : 'Enregistrer les notes saisies'}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="bg-white p-6 rounded-3xl border border-slate-100">
+          <h3 className="font-black mb-4">Notes de {activeClass} en {teacherSubject}</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-xs font-black uppercase text-slate-400">
+                  <th className="pb-3">Eleve</th>
+                  <th className="pb-3">Note</th>
+                  <th className="pb-3">Date</th>
+                  <th className="pb-3">Commentaire</th>
+                  <th className="pb-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleGrades.map((grade) => (
+                  <tr key={grade.id} className="border-t border-slate-100">
+                    <td className="py-3 font-medium">{grade.student_name || `Eleve #${grade.student_id || grade.studentId}`}</td>
+                    <td className="py-3">
+                      <span className={`px-3 py-1 rounded-full font-black ${getGradeColor(grade.grade)}`}>
+                        {grade.grade}/20
+                      </span>
+                    </td>
+                    <td className="py-3 text-slate-400 text-sm">{(grade.graded_date || grade.date || '').slice(0, 10)}</td>
+                    <td className="py-3 text-slate-500 text-sm">{grade.comment || '-'}</td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handleViewAnalytics(Number(grade.student_id || grade.studentId))}
+                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                        >
+                          Voir
+                        </button>
+                        <button
+                          onClick={() => handleEditGrade(grade)}
+                          className="text-amber-600 hover:text-amber-800 text-sm font-medium"
+                        >
+                          Modifier
+                        </button>
+                        <button
+                          onClick={() => handleDeleteGrade(grade.id)}
+                          className="text-rose-600 hover:text-rose-800 text-sm font-medium"
+                        >
+                          Supprimer
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {visibleGrades.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-slate-400">Aucune note pour cette classe et cette matiere.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <header>
         <h2 className="text-3xl font-black text-slate-800 tracking-tight">Gestion des Notes</h2>
       </header>
 
-      {/* Create new grade form */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-100">
-        <h3 className="font-black mb-4">Ajouter une Note</h3>
-        <form onSubmit={handleCreateGrade} className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <select
-            className="p-3 border border-slate-200 rounded-xl font-medium"
-            value={newGrade.studentId}
-            onChange={(e) => setNewGrade({ ...newGrade, studentId: e.target.value })}
-            required
-          >
-            <option value="">Sélectionner un élève</option>
-            {students.map((student) => (
-              <option key={student.id} value={student.id}>
-                {student.name} ({student.className})
-              </option>
-            ))}
-          </select>
-          <select
-            className="p-3 border border-slate-200 rounded-xl font-medium"
-            value={newGrade.subject}
-            onChange={(e) => setNewGrade({ ...newGrade, subject: e.target.value })}
-            required
-          >
-            <option value="">Matière</option>
-            {subjects.map((subj) => (
-              <option key={subj} value={subj}>{subj}</option>
-            ))}
-          </select>
-          <input
-            type="number"
-            min="0"
-            max="20"
-            step="0.5"
-            placeholder="Note /20"
-            className="p-3 border border-slate-200 rounded-xl font-medium"
-            value={newGrade.grade}
-            onChange={(e) => setNewGrade({ ...newGrade, grade: e.target.value })}
-            required
-          />
-          <input
-            type="text"
-            placeholder="Commentaire (optionnel)"
-            className="p-3 border border-slate-200 rounded-xl font-medium"
-            value={newGrade.comment}
-            onChange={(e) => setNewGrade({ ...newGrade, comment: e.target.value })}
-          />
-          <button
-            type="submit"
-            className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-black hover:bg-indigo-700 transition-colors"
-          >
-            Ajouter
-          </button>
-        </form>
-      </div>
-
-      {/* Grades list */}
       <div className="bg-white p-6 rounded-3xl border border-slate-100">
         <h3 className="font-black mb-4">Toutes les Notes</h3>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="text-left text-xs font-black uppercase text-slate-400">
-                <th className="pb-3">Élève</th>
-                <th className="pb-3">Matière</th>
+                <th className="pb-3">Eleve</th>
+                <th className="pb-3">Matiere</th>
                 <th className="pb-3">Note</th>
                 <th className="pb-3">Date</th>
                 <th className="pb-3">Commentaire</th>
@@ -350,22 +514,36 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
             <tbody>
               {grades.map((grade) => (
                 <tr key={grade.id} className="border-t border-slate-100">
-                  <td className="py-3 font-medium">{grade.student_name || `Élève #${grade.student_id}`}</td>
+                  <td className="py-3 font-medium">{grade.student_name || `Eleve #${grade.student_id || grade.studentId}`}</td>
                   <td className="py-3">{grade.subject}</td>
                   <td className="py-3">
                     <span className={`px-3 py-1 rounded-full font-black ${getGradeColor(grade.grade)}`}>
                       {grade.grade}/20
                     </span>
                   </td>
-                  <td className="py-3 text-slate-400 text-sm">{grade.graded_date?.slice(0, 10)}</td>
+                  <td className="py-3 text-slate-400 text-sm">{(grade.graded_date || grade.date || '').slice(0, 10)}</td>
                   <td className="py-3 text-slate-500 text-sm">{grade.comment || '-'}</td>
                   <td className="py-3">
-                    <button
-                      onClick={() => handleViewAnalytics(grade.student_id)}
-                      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                    >
-                      Voir Analytics
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => handleViewAnalytics(Number(grade.student_id || grade.studentId))}
+                        className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                      >
+                        Voir
+                      </button>
+                      <button
+                        onClick={() => handleEditGrade(grade)}
+                        className="text-amber-600 hover:text-amber-800 text-sm font-medium"
+                      >
+                        Modifier
+                      </button>
+                      <button
+                        onClick={() => handleDeleteGrade(grade.id)}
+                        className="text-rose-600 hover:text-rose-800 text-sm font-medium"
+                      >
+                        Supprimer
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -379,20 +557,19 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
         </div>
       </div>
 
-      {/* Analytics modal */}
       {showAnalytics && analytics && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-black">Analytics Élève</h3>
+              <h3 className="text-xl font-black">Analytics Eleve</h3>
               <button onClick={() => setShowAnalytics(false)} className="text-slate-400 hover:text-slate-600">
-                ✕
+                x
               </button>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div className="bg-slate-50 p-4 rounded-2xl">
-                <p className="text-xs text-slate-500">Moyenne Générale</p>
+                <p className="text-xs text-slate-500">Moyenne Generale</p>
                 <p className="text-3xl font-black">{analytics.overall_average}/20</p>
               </div>
               <div className="bg-slate-50 p-4 rounded-2xl">
@@ -408,7 +585,7 @@ const Grades: React.FC<GradesPageProps> = ({ role, user, activeChild }) => {
 
             {analytics.evolution && analytics.evolution.length > 0 && (
               <div>
-                <p className="text-xs font-black uppercase text-slate-400 mb-2">Évolution</p>
+                <p className="text-xs font-black uppercase text-slate-400 mb-2">Evolution</p>
                 {renderEvolutionChart(analytics.evolution)}
               </div>
             )}

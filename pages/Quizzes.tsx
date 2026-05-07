@@ -1,7 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { API } from '../services/api';
 import QuizPlayer from '../components/QuizPlayer';
-import { UserRole, StudentProfile, Quiz, Question } from '../types';
+import { UserRole, StudentProfile, Quiz, Question, User } from '../types';
+
+interface QuizzesProps {
+  role: UserRole;
+  user: User;
+  activeChild?: StudentProfile | null;
+  activeClass?: string;
+}
+
+interface QuizMeta {
+  subject?: string;
+  className?: string;
+  label: string;
+}
+
+const META_SEPARATOR = ' || ';
 
 const emptyQuestion = (): Question => ({
   id: `question-${Date.now()}`,
@@ -16,18 +31,57 @@ const normalizeEditableQuiz = (quiz: Partial<Quiz>): Partial<Quiz> => ({
   questions: quiz.questions || [],
 });
 
-const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; activeClass?: string }> = ({ role, activeChild, activeClass }) => {
-  const [quizzes, setQuizzes] = useState<Quiz[]>([]); 
-  const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null); 
-  const [editingQuiz, setEditingQuiz] = useState<Partial<Quiz> | null>(null); 
-  const [statsQuiz, setStatsQuiz] = useState<Quiz | null>(null); 
-  const [isLoading, setIsLoading] = useState(true); 
-  const [isOpeningQuiz, setIsOpeningQuiz] = useState(false); 
-  const [error, setError] = useState<string | null>(null); 
+const parseQuizMeta = (chapter: string): QuizMeta => {
+  const raw = chapter || '';
+  const parts = raw.split(META_SEPARATOR).map(part => part.trim()).filter(Boolean);
+  if (parts.length < 3) {
+    return { label: raw };
+  }
+
+  const [subjectPart, classPart, ...labelParts] = parts;
+  const subject = subjectPart.replace(/^matiere\s*:\s*/i, '').trim();
+  const className = classPart.replace(/^classe\s*:\s*/i, '').trim();
+  const label = labelParts.join(META_SEPARATOR).replace(/^cours\s*:\s*/i, '').trim();
+  return { subject, className, label: label || raw };
+};
+
+const buildQuizChapter = (subject: string | undefined, className: string | undefined, label: string | undefined): string => {
+  const cleanedLabel = (label || '').trim();
+  const parts = [
+    `Matiere: ${subject || 'Quiz'}`,
+    `Classe: ${className || 'Generale'}`,
+    `Cours: ${cleanedLabel}`,
+  ];
+  return parts.join(META_SEPARATOR);
+};
+
+const Quizzes: React.FC<QuizzesProps> = ({ role, user, activeChild, activeClass }) => {
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
+  const [editingQuiz, setEditingQuiz] = useState<Partial<Quiz> | null>(null);
+  const [statsQuiz, setStatsQuiz] = useState<Quiz | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isOpeningQuiz, setIsOpeningQuiz] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const teacherSubject = user.subject?.trim();
 
   useEffect(() => {
     loadQuizzes();
-  }, []);
+  }, [role, user.id, activeClass]);
+
+  const visibleQuizzes = useMemo(() => {
+    if (role !== UserRole.TEACHER) return quizzes;
+
+    return quizzes.filter((quiz) => {
+      const meta = parseQuizMeta(quiz.chapter);
+      const subjectMatches = teacherSubject
+        ? (meta.subject || quiz.title || '').toLowerCase().includes(teacherSubject.toLowerCase())
+        : true;
+      const classMatches = activeClass ? (!meta.className || meta.className === activeClass) : true;
+      return subjectMatches && classMatches;
+    });
+  }, [quizzes, role, teacherSubject, activeClass]);
 
   const loadQuizzes = async () => {
     setIsLoading(true);
@@ -75,7 +129,7 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
 
   const validateQuiz = (quiz: Partial<Quiz>) => {
     if (!quiz.title?.trim() || !quiz.chapter?.trim()) {
-      return 'Renseigne un titre et un chapitre.';
+      return 'Renseigne un titre et le cours concerne.';
     }
 
     if (!quiz.questions?.length) {
@@ -86,8 +140,8 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
       const options = question.options.map(option => option.trim()).filter(Boolean);
       if (!question.text.trim()) return `La question ${index + 1} est vide.`;
       if (options.length < 2) return `La question ${index + 1} doit avoir au moins deux options.`;
-      if (!question.correctOption.trim()) return `Choisis la bonne réponse pour la question ${index + 1}.`;
-      if (!options.includes(question.correctOption.trim())) return `La bonne réponse de la question ${index + 1} doit être une option existante.`;
+      if (!question.correctOption.trim()) return `Choisis la bonne reponse pour la question ${index + 1}.`;
+      if (!options.includes(question.correctOption.trim())) return `La bonne reponse de la question ${index + 1} doit etre une option existante.`;
     }
 
     return null;
@@ -109,10 +163,14 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
       correctOption: question.correctOption.trim(),
     }));
 
+    const storedChapter = role === UserRole.TEACHER
+      ? buildQuizChapter(teacherSubject, activeClass, editingQuiz.chapter)
+      : editingQuiz.chapter!.trim();
+
     const finalQuiz: Quiz = {
       id: editingQuiz.id || `q-${Date.now()}`,
       title: editingQuiz.title!.trim(),
-      chapter: editingQuiz.chapter!.trim(),
+      chapter: storedChapter,
       duration: editingQuiz.duration || 15,
       questionCount: questions.length,
       status: 'published',
@@ -176,7 +234,11 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
         <div>
           <h2 className="text-2xl font-black text-slate-800 tracking-tight">Espace Quiz</h2>
           <p className="text-slate-500 text-sm font-medium">
-            {role === UserRole.TEACHER ? activeClass : activeChild ? `Quiz de ${activeChild.name}` : 'Tes évaluations'}
+            {role === UserRole.TEACHER
+              ? `${teacherSubject || 'Matiere'} • ${activeClass || 'Classe'}`
+              : activeChild
+                ? `Quiz de ${activeChild.name}`
+                : 'Tes evaluations'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -191,11 +253,22 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
               onClick={() => setEditingQuiz({ title: '', chapter: '', questions: [emptyQuestion()], duration: 15 })}
               className="bg-indigo-600 text-white px-6 py-3 rounded-2xl text-[10px] font-black shadow-lg uppercase tracking-widest"
             >
-              + Créer Quiz
+              + Creer Quiz
             </button>
           )}
         </div>
       </div>
+
+      {role === UserRole.TEACHER && (
+        <div className="bg-white border border-slate-100 rounded-3xl p-5 flex flex-wrap gap-3">
+          <span className="px-4 py-2 rounded-2xl bg-indigo-50 text-indigo-600 text-xs font-black uppercase tracking-widest">
+            Matiere: {teacherSubject || 'Non definie'}
+          </span>
+          <span className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-xs font-black uppercase tracking-widest">
+            Classe active: {activeClass || 'Non definie'}
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-2xl bg-rose-50 px-5 py-4 text-sm font-bold text-rose-600">
@@ -207,14 +280,15 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600" />
         </div>
-      ) : quizzes.length === 0 ? (
+      ) : visibleQuizzes.length === 0 ? (
         <div className="text-center py-20 bg-slate-50 rounded-3xl">
-          <p className="text-slate-400 font-medium">Aucun quiz disponible</p>
+          <p className="text-slate-400 font-medium">Aucun quiz disponible pour ce contexte.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {quizzes.map((quiz) => {
+          {visibleQuizzes.map((quiz) => {
             const hasQuestions = quiz.questionCount > 0 || quiz.questions.length > 0;
+            const meta = parseQuizMeta(quiz.chapter);
             return (
               <div key={quiz.id} className="bg-white rounded-3xl border border-slate-100 p-8 flex flex-col justify-between shadow-sm hover:shadow-xl transition-all group">
                 <div className="space-y-4">
@@ -226,8 +300,18 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
                   </div>
                   <div>
                     <h4 className="text-xl font-black text-slate-800 leading-tight group-hover:text-indigo-600 transition-colors">{quiz.title}</h4>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{quiz.chapter}</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{meta.label || quiz.chapter}</p>
                   </div>
+                  {role === UserRole.TEACHER && (
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-[9px] font-black px-3 py-1 rounded-full bg-slate-100 text-slate-600 uppercase tracking-widest">
+                        {meta.subject || teacherSubject || 'Matiere'}
+                      </span>
+                      <span className="text-[9px] font-black px-3 py-1 rounded-full bg-amber-50 text-amber-700 uppercase tracking-widest">
+                        {meta.className || activeClass || 'Classe'}
+                      </span>
+                    </div>
+                  )}
                   <p className={`text-xs font-black ${hasQuestions ? 'text-slate-400' : 'text-rose-500'}`}>
                     {hasQuestions ? `${quiz.questionCount || quiz.questions.length} question(s)` : 'Aucune question'}
                   </p>
@@ -235,7 +319,7 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
                 <div className="flex flex-col space-y-2 mt-8">
                   {role === UserRole.TEACHER ? (
                     <div className="flex space-x-2">
-                      <button onClick={() => editQuiz(quiz)} className="flex-1 py-3 bg-slate-50 text-slate-600 rounded-xl text-[9px] font-black uppercase tracking-widest">Éditer</button>
+                      <button onClick={() => editQuiz(quiz)} className="flex-1 py-3 bg-slate-50 text-slate-600 rounded-xl text-[9px] font-black uppercase tracking-widest">Editer</button>
                       <button onClick={() => setStatsQuiz(quiz)} className="flex-1 py-3 bg-indigo-50 text-indigo-600 rounded-xl text-[9px] font-black uppercase tracking-widest">Stats</button>
                       <button onClick={() => deleteQuiz(quiz.id)} className="p-3 bg-rose-50 text-rose-600 rounded-xl" aria-label="Supprimer le quiz">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -251,7 +335,7 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
                         hasQuestions ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                       }`}
                     >
-                      {quiz.status === 'completed' ? 'Correction' : 'Démarrer'}
+                      {quiz.status === 'completed' ? 'Correction' : 'Demarrer'}
                     </button>
                   )}
                 </div>
@@ -264,11 +348,23 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
       {editingQuiz && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-3xl rounded-3xl p-8 shadow-2xl space-y-6 overflow-y-auto max-h-[90vh]">
-            <h3 className="text-xl font-black text-slate-800 tracking-tight">{editingQuiz.id ? 'Éditer' : 'Nouveau'} Quiz</h3>
+            <h3 className="text-xl font-black text-slate-800 tracking-tight">{editingQuiz.id ? 'Editer' : 'Nouveau'} Quiz</h3>
+            {role === UserRole.TEACHER && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 bg-slate-50 rounded-2xl">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Matiere</p>
+                  <p className="text-sm font-black text-slate-700 mt-2">{teacherSubject || 'Non definie'}</p>
+                </div>
+                <div className="p-4 bg-slate-50 rounded-2xl">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Classe</p>
+                  <p className="text-sm font-black text-slate-700 mt-2">{activeClass || 'Non definie'}</p>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <input type="text" placeholder="Titre" className="p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500" value={editingQuiz.title || ''} onChange={e => setEditingQuiz({ ...editingQuiz, title: e.target.value })} />
-              <input type="text" placeholder="Chapitre" className="p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500" value={editingQuiz.chapter || ''} onChange={e => setEditingQuiz({ ...editingQuiz, chapter: e.target.value })} />
-              <input type="number" min={1} placeholder="Durée" className="p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500" value={editingQuiz.duration || 15} onChange={e => setEditingQuiz({ ...editingQuiz, duration: Number(e.target.value) })} />
+              <input type="text" placeholder="Cours ou notion" className="p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500" value={role === UserRole.TEACHER ? parseQuizMeta(editingQuiz.chapter || '').label : editingQuiz.chapter || ''} onChange={e => setEditingQuiz({ ...editingQuiz, chapter: e.target.value })} />
+              <input type="number" min={1} placeholder="Duree" className="p-4 bg-slate-50 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-indigo-500" value={editingQuiz.duration || 15} onChange={e => setEditingQuiz({ ...editingQuiz, duration: Number(e.target.value) })} />
             </div>
 
             <div className="space-y-4">
@@ -315,7 +411,7 @@ const Quizzes: React.FC<{ role: UserRole; activeChild?: StudentProfile | null; a
                     value={question.correctOption}
                     onChange={e => updateQuestion(questionIndex, { correctOption: e.target.value })}
                   >
-                    <option value="">Choisir la bonne réponse</option>
+                    <option value="">Choisir la bonne reponse</option>
                     {question.options.filter(Boolean).map((option, optionIndex) => (
                       <option key={`${option}-${optionIndex}`} value={option}>{option}</option>
                     ))}

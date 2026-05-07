@@ -383,7 +383,18 @@ def get_student_quiz_analytics(
             "score": score,
             "correct_answers": correct,
             "total_questions": len(questions),
-            "attempt_date": str(first_answer.created_at) if first_answer.created_at else None
+            "attempt_date": str(first_answer.created_at) if first_answer.created_at else None,
+            "answers": [
+                {
+                    "question_id": answer.question_id,
+                    "question_text": next((q.question_text for q in questions if q.id == answer.question_id), ""),
+                    "student_answer": answer.student_answer,
+                    "correct_answer": next((q.correct_answer for q in questions if q.id == answer.question_id), ""),
+                    "is_correct": bool(answer.is_correct == 1),
+                    "points_earned": answer.points_earned or 0,
+                }
+                for answer in quiz_answers
+            ]
         })
 
     # Sort by date

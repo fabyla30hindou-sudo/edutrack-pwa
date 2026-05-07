@@ -15,6 +15,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Results from './pages/Results';
 import Grades from './pages/Grades';
 import AIChat from './components/AIChat';
+import FollowUp from './pages/FollowUp';
 
 const mapChildToProfile = (c: any): StudentProfile => ({
   id: String(c.id),
@@ -107,13 +108,15 @@ const App: React.FC = () => {
       case 'users':
         return isAdminLike ? <AdminDashboard role={user.role} currentPage={currentPage} /> : null;
       case 'quizzes':
-        return <Quizzes role={user.role} activeChild={activeChild} activeClass={activeClass} />;
+        return <Quizzes role={user.role} user={user} activeChild={activeChild} activeClass={activeClass} />;
       case 'results':
         return <Results role={user.role} user={user} activeChild={activeChild} />;
       case 'grades':
-        return <Grades role={user.role} user={user} activeChild={activeChild} />;
+        return <Grades role={user.role} user={user} activeChild={activeChild} activeClass={activeClass} />;
       case 'attendance':
         return user.role === UserRole.TEACHER ? <Attendance activeClass={activeClass} /> : <Dashboard role={user.role} user={user} activeChild={activeChild} setActiveChild={setActiveChild} activeClass={activeClass} setActiveClass={setActiveClass} />;
+      case 'followup':
+        return user.role === UserRole.TEACHER ? <FollowUp user={user} activeClass={activeClass} /> : null;
       case 'messaging':
         return <Messaging role={user.role} user={user} activeChild={activeChild} />;
       case 'notifications':

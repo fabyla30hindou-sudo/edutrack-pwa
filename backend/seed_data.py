@@ -1,49 +1,90 @@
 """
-Idempotent seed script for EduTrack backend database.
-Creates a superadmin and demo data across core tables.
+Reset and seed script for EduTrack demo data.
+
+This script:
+- removes existing SQLite databases used by the project
+- recreates the schema
+- inserts a coherent Cameroon-themed demo dataset
+- prints login credentials clearly at the end
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import text
 
-from app.database import Base, SessionLocal, engine
-from app.models.admin import Admin
-from app.models.attendance import Attendance
-from app.models.grade import Grade
-from app.models.message import Message, Notification
-from app.models.parent import Parent, parent_student_association
-from app.models.quiz import Quiz, QuizAnswer, QuizQuestion
-from app.models.school import School
-from app.models.student import Student
-from app.models.superadmin import SuperAdmin
-from app.models.teacher import Teacher
-from app.models.user import User
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+
+# Force a stable working directory so sqlite:///./edutrack.db always targets
+# the same database file during seed execution.
+os.chdir(PROJECT_ROOT)
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app.database import Base, SessionLocal, engine  # noqa: E402
+from app.models.admin import Admin  # noqa: E402
+from app.models.attendance import Attendance  # noqa: E402
+from app.models.grade import Grade  # noqa: E402
+from app.models.message import Message, Notification  # noqa: E402
+from app.models.parent import Parent, parent_student_association  # noqa: E402
+from app.models.quiz import Quiz, QuizAnswer, QuizQuestion  # noqa: E402
+from app.models.school import School  # noqa: E402
+from app.models.student import Student  # noqa: E402
+from app.models.superadmin import SuperAdmin  # noqa: E402
+from app.models.teacher import Teacher  # noqa: E402
+from app.models.user import User  # noqa: E402
 
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def get_or_create_school(db: Session, name: str) -> School:
-    school = db.query(School).filter(School.name.ilike(name)).first()
-    if school:
-        if not school.is_active:
-            school.is_active = True
-            db.flush()
-        return school
-    school = School(name=name, is_active=True)
-    db.add(school)
-    db.flush()
-    return school
+def wipe_sqlite_files() -> list[Path]:
+    db_paths = [
+        PROJECT_ROOT / "edutrack.db",
+        BACKEND_DIR / "edutrack.db",
+    ]
+    removed: list[Path] = []
+    for db_path in db_paths:
+        if db_path.exists():
+            try:
+                db_path.unlink()
+                removed.append(db_path)
+            except PermissionError:
+                # Another local process may currently hold the file open.
+                # In that case we will fall back to truncating data in-place.
+                continue
+    return removed
 
 
-def get_or_create_user(
-    db: Session,
+def truncate_all_tables() -> None:
+    with engine.begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=OFF"))
+        for table in reversed(Base.metadata.sorted_tables):
+            connection.execute(table.delete())
+        connection.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def reset_database() -> list[Path]:
+    engine.dispose()
+    removed = wipe_sqlite_files()
+    if not (PROJECT_ROOT / "edutrack.db").exists():
+        Base.metadata.create_all(bind=engine)
+    else:
+        Base.metadata.create_all(bind=engine)
+        truncate_all_tables()
+    Base.metadata.create_all(bind=engine)
+    return removed
+
+
+def create_user(
+    db,
     *,
     email: str,
     full_name: str,
@@ -51,20 +92,12 @@ def get_or_create_user(
     school_id: str,
     role: str,
 ) -> User:
-    user = db.query(User).filter(User.email.ilike(email)).first()
-    if user:
-        user.full_name = full_name
-        user.school_id = str(school_id)
-        user.role = role
-        user.is_active = True
-        db.flush()
-        return user
     user = User(
         email=email,
-        full_name=full_name,
         hashed_password=hash_password(password),
+        full_name=full_name,
         school_id=str(school_id),
-        role=role,
+        role=role.upper(),
         is_active=True,
     )
     db.add(user)
@@ -72,292 +105,426 @@ def get_or_create_user(
     return user
 
 
-def ensure_parent_child_link(db: Session, parent_id: int, student_id: int) -> None:
-    existing = db.execute(
-        select(parent_student_association).where(
-            parent_student_association.c.parent_id == parent_id,
-            parent_student_association.c.student_id == student_id,
+def create_quiz_with_questions(
+    db,
+    *,
+    teacher_user: User,
+    title: str,
+    description: str,
+    duration_minutes: int,
+    questions: list[dict],
+) -> tuple[Quiz, list[QuizQuestion]]:
+    quiz = Quiz(
+        title=title,
+        description=description,
+        created_by=teacher_user.id,
+        total_questions=len(questions),
+        duration_minutes=duration_minutes,
+    )
+    db.add(quiz)
+    db.flush()
+
+    created_questions: list[QuizQuestion] = []
+    for raw in questions:
+        question = QuizQuestion(
+            quiz_id=quiz.id,
+            question_text=raw["question_text"],
+            question_type=raw["question_type"],
+            options=json.dumps(raw.get("options", [])),
+            correct_answer=raw["correct_answer"],
+            points=raw.get("points", 1.0),
         )
-    ).first()
-    if not existing:
-        db.execute(
-            parent_student_association.insert().values(
-                parent_id=parent_id,
-                student_id=student_id,
+        db.add(question)
+        db.flush()
+        created_questions.append(question)
+    return quiz, created_questions
+
+
+def add_quiz_attempt(
+    db,
+    *,
+    quiz: Quiz,
+    student: Student,
+    questions: list[QuizQuestion],
+    answers: list[str],
+    submitted_at: datetime,
+) -> None:
+    for question, answer in zip(questions, answers):
+        is_correct = answer.strip().lower() == (question.correct_answer or "").strip().lower()
+        db.add(
+            QuizAnswer(
+                quiz_id=quiz.id,
+                student_id=student.id,
+                question_id=question.id,
+                student_answer=answer,
+                is_correct=1 if is_correct else 0,
+                points_earned=question.points if is_correct else 0.0,
+                submitted_at=submitted_at,
             )
         )
 
 
 def seed() -> None:
-    Base.metadata.create_all(bind=engine)
+    removed_dbs = reset_database()
     db = SessionLocal()
-    try:
-        school_names = [
-            "Lycee Scientifique",
-            "College Voltaire",
-            "Lycee Technique",
-            "Lycee Bilingue de Bertoua",
-        ]
-        schools = [get_or_create_school(db, name) for name in school_names]
-        primary_school = schools[0]
-        school_id = str(primary_school.id)
 
-        superadmin_user = get_or_create_user(
+    credentials: list[tuple[str, str, str, str]] = []
+
+    try:
+        school = School(name="College Bilingue La Rigueur de Yaounde", is_active=True)
+        db.add(school)
+        db.flush()
+        school_id = str(school.id)
+
+        superadmin_user = create_user(
             db,
-            email="superadmin@edutrack.fr",
-            full_name="Super Administrateur",
-            password="superadmin123",
+            email="superadmin@edutrack.cm",
+            full_name="Amina Tchameni",
+            password="SuperAdmin123",
             school_id="SYSTEM",
             role="SUPERADMIN",
         )
-        superadmin_profile = db.query(SuperAdmin).filter(SuperAdmin.user_id == superadmin_user.id).first()
-        if not superadmin_profile:
-            db.add(SuperAdmin(user_id=superadmin_user.id))
+        db.add(SuperAdmin(user_id=superadmin_user.id))
+        credentials.append(("SUPERADMIN", superadmin_user.full_name, superadmin_user.email, "SuperAdmin123"))
 
-        admin_user = get_or_create_user(
+        admin_user = create_user(
             db,
-            email="admin@gmail.fr",
-            full_name="Administrateur Ecole",
-            password="admin123",
+            email="proviseur@larigueur.cm",
+            full_name="Pauline Ndzi",
+            password="Admin123",
             school_id=school_id,
             role="ADMIN",
         )
-        admin_profile = db.query(Admin).filter(Admin.user_id == admin_user.id).first()
-        if not admin_profile:
-            db.add(Admin(user_id=admin_user.id, school_id=school_id))
+        db.add(Admin(user_id=admin_user.id, school_id=school_id))
+        credentials.append(("ADMIN", admin_user.full_name, admin_user.email, "Admin123"))
 
-        teacher_user = get_or_create_user(
-            db,
-            email="prof@gmail.fr",
-            full_name="Mme Valerie",
-            password="teacher123",
-            school_id=school_id,
-            role="TEACHER",
-        )
-        teacher_profile = db.query(Teacher).filter(Teacher.user_id == teacher_user.id).first()
-        if not teacher_profile:
-            db.add(
-                Teacher(
-                    user_id=teacher_user.id,
-                    school_id=school_id,
-                    subject="Mathematiques",
-                    classes=json.dumps(["6eme A", "5eme B"]),
-                )
+        teacher_specs = [
+            {
+                "full_name": "Boris Ndzi",
+                "email": "boris.ndzi@larigueur.cm",
+                "password": "ProfInfo123",
+                "subject": "Informatique",
+                "classes": ["3eme A", "3eme B"],
+            },
+            {
+                "full_name": "Estelle Ngono",
+                "email": "estelle.ngono@larigueur.cm",
+                "password": "ProfAnglais123",
+                "subject": "Anglais",
+                "classes": ["3eme A", "3eme B"],
+            },
+        ]
+
+        teachers_by_subject: dict[str, tuple[User, Teacher]] = {}
+        for spec in teacher_specs:
+            user = create_user(
+                db,
+                email=spec["email"],
+                full_name=spec["full_name"],
+                password=spec["password"],
+                school_id=school_id,
+                role="TEACHER",
             )
+            teacher = Teacher(
+                user_id=user.id,
+                school_id=school_id,
+                subject=spec["subject"],
+                classes=json.dumps(spec["classes"]),
+            )
+            db.add(teacher)
+            teachers_by_subject[spec["subject"]] = (user, teacher)
+            credentials.append(("TEACHER", user.full_name, user.email, spec["password"]))
 
-        parent_user = get_or_create_user(
+        parent_user = create_user(
             db,
-            email="jean@example.com",
-            full_name="Jean Martin",
-            password="parent123",
+            email="marie.ewane@famille.cm",
+            full_name="Marie Ewane",
+            password="Parent123",
             school_id=school_id,
             role="PARENT",
         )
-        parent_profile = db.query(Parent).filter(Parent.user_id == parent_user.id).first()
-        if not parent_profile:
-            parent_profile = Parent(user_id=parent_user.id)
-            db.add(parent_profile)
-            db.flush()
+        parent = Parent(user_id=parent_user.id)
+        db.add(parent)
+        db.flush()
+        credentials.append(("PARENT", parent_user.full_name, parent_user.email, "Parent123"))
 
-        students_spec = [
-            ("martin@gmail.fr", "Leo Martin", "student123", "MAT001", "6eme A"),
-            ("essono@gmail.fr", "Nina Essono", "student123", "MAT002", "6eme A"),
-            ("ngo@gmail.fr", "Paul Ngo", "student123", "MAT003", "5eme B"),
+        student_specs = [
+            {
+                "full_name": "Cedric Mvondo",
+                "email": "cedric.mvondo@eleve.cm",
+                "password": "Eleve123",
+                "matricule": "CMR3A001",
+                "class_name": "3eme A",
+            },
+            {
+                "full_name": "Diane Fouda",
+                "email": "diane.fouda@eleve.cm",
+                "password": "Eleve123",
+                "matricule": "CMR3A002",
+                "class_name": "3eme A",
+            },
+            {
+                "full_name": "Blaise Etoa",
+                "email": "blaise.etoa@eleve.cm",
+                "password": "Eleve123",
+                "matricule": "CMR3B001",
+                "class_name": "3eme B",
+            },
+            {
+                "full_name": "Ruth Ndzi",
+                "email": "ruth.ndzi@eleve.cm",
+                "password": "Eleve123",
+                "matricule": "CMR3B002",
+                "class_name": "3eme B",
+            },
         ]
-        seeded_students: list[Student] = []
-        for email, full_name, password, matricule, class_name in students_spec:
-            student_user = get_or_create_user(
+
+        students: list[tuple[User, Student]] = []
+        for spec in student_specs:
+            user = create_user(
                 db,
-                email=email,
-                full_name=full_name,
-                password=password,
+                email=spec["email"],
+                full_name=spec["full_name"],
+                password=spec["password"],
                 school_id=school_id,
                 role="STUDENT",
             )
-            student_profile = db.query(Student).filter(Student.user_id == student_user.id).first()
-            if not student_profile:
-                student_profile = db.query(Student).filter(Student.matricule == matricule).first()
-            if not student_profile:
-                student_profile = Student(
-                    user_id=student_user.id,
-                    school_id=school_id,
-                    matricule=matricule,
-                    class_name=class_name,
+            student = Student(
+                user_id=user.id,
+                matricule=spec["matricule"],
+                school_id=school_id,
+                class_name=spec["class_name"],
+            )
+            db.add(student)
+            db.flush()
+            students.append((user, student))
+            credentials.append(("STUDENT", user.full_name, user.email, spec["password"]))
+
+            db.execute(
+                parent_student_association.insert().values(
+                    parent_id=parent.id,
+                    student_id=student.id,
                 )
-                db.add(student_profile)
-                db.flush()
-            else:
-                student_profile.school_id = school_id
-                student_profile.class_name = class_name
-                db.flush()
-            seeded_students.append(student_profile)
+            )
 
-        ensure_parent_child_link(db, parent_profile.id, seeded_students[0].id)
-        ensure_parent_child_link(db, parent_profile.id, seeded_students[1].id)
+        now = datetime.utcnow()
 
-        existing_grade_count = db.query(Grade).filter(Grade.teacher_id == teacher_user.id).count()
-        if existing_grade_count < 6:
-            for student in seeded_students:
+        info_teacher_user = teachers_by_subject["Informatique"][0]
+        english_teacher_user = teachers_by_subject["Anglais"][0]
+
+        grade_matrix = {
+            "Cedric Mvondo": {"Informatique": 15.5, "Anglais": 13.0},
+            "Diane Fouda": {"Informatique": 16.0, "Anglais": 14.5},
+            "Blaise Etoa": {"Informatique": 12.5, "Anglais": 11.5},
+            "Ruth Ndzi": {"Informatique": 14.0, "Anglais": 15.0},
+        }
+        grade_comments = {
+            "Informatique": "Bonne maitrise des bases de bureautique et de logique.",
+            "Anglais": "Participation satisfaisante et bonne comprehension orale.",
+        }
+
+        for user, student in students:
+            for subject, value in grade_matrix[user.full_name].items():
+                teacher_user = info_teacher_user if subject == "Informatique" else english_teacher_user
                 db.add(
                     Grade(
                         student_id=student.id,
-                        subject="Mathematiques",
-                        grade=14.5,
+                        subject=subject,
+                        grade=value,
                         teacher_id=teacher_user.id,
-                        comment="Bon travail",
-                        graded_date=datetime.utcnow() - timedelta(days=2),
-                    )
-                )
-                db.add(
-                    Grade(
-                        student_id=student.id,
-                        subject="Sciences",
-                        grade=12.0,
-                        teacher_id=teacher_user.id,
-                        comment="Peut mieux faire",
-                        graded_date=datetime.utcnow() - timedelta(days=1),
+                        comment=grade_comments[subject],
+                        graded_date=now - timedelta(days=3 if subject == "Informatique" else 1),
                     )
                 )
 
-        existing_attendance_count = db.query(Attendance).count()
-        if existing_attendance_count < 8:
-            for student in seeded_students:
-                db.add(
-                    Attendance(
-                        student_id=student.id,
-                        attendance_date=date.today() - timedelta(days=1),
-                        status="present",
-                        notes="RAS",
-                    )
-                )
-                db.add(
-                    Attendance(
-                        student_id=student.id,
-                        attendance_date=date.today(),
-                        status="late",
-                        notes="Retard de 10 min",
-                    )
-                )
-
-        quiz = db.query(Quiz).filter(Quiz.title == "Quiz Mathematiques - Fractions").first()
-        if not quiz:
-            quiz = Quiz(
-                title="Quiz Mathematiques - Fractions",
-                description="Evaluation rapide sur les fractions",
-                created_by=teacher_user.id,
-                total_questions=2,
-                duration_minutes=20,
-            )
-            db.add(quiz)
-            db.flush()
-
-        question_count = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz.id).count()
-        if question_count == 0:
-            q1 = QuizQuestion(
-                quiz_id=quiz.id,
-                question_text="Combien vaut 1/2 + 1/4 ?",
-                question_type="multiple_choice",
-                options=json.dumps(["1/4", "3/4", "2/4", "1"]),
-                correct_answer="3/4",
-                points=1.0,
-            )
-            q2 = QuizQuestion(
-                quiz_id=quiz.id,
-                question_text="Vrai ou faux: 2/3 est superieur a 3/4",
-                question_type="true_false",
-                options=json.dumps(["true", "false"]),
-                correct_answer="false",
-                points=1.0,
-            )
-            db.add(q1)
-            db.add(q2)
-            db.flush()
-
+        attendance_rows = [
+            ("Cedric Mvondo", date.today() - timedelta(days=2), "present", "Present au cours d'informatique."),
+            ("Cedric Mvondo", date.today() - timedelta(days=1), "late", "Retard de 8 minutes apres la pause."),
+            ("Diane Fouda", date.today() - timedelta(days=2), "present", "Travail regulier en classe."),
+            ("Diane Fouda", date.today() - timedelta(days=1), "present", "RAS."),
+            ("Blaise Etoa", date.today() - timedelta(days=2), "absent", "Absence signalee par le parent."),
+            ("Blaise Etoa", date.today() - timedelta(days=1), "present", "Retour en classe normal."),
+            ("Ruth Ndzi", date.today() - timedelta(days=2), "present", "Bonne attitude en classe."),
+            ("Ruth Ndzi", date.today() - timedelta(days=1), "present", "Participation active."),
+        ]
+        student_by_name = {user.full_name: student for user, student in students}
+        for student_name, attendance_date, status, notes in attendance_rows:
             db.add(
-                QuizAnswer(
-                    quiz_id=quiz.id,
-                    student_id=seeded_students[0].id,
-                    question_id=q1.id,
-                    student_answer="3/4",
-                    is_correct=1,
-                    points_earned=1.0,
-                )
-            )
-            db.add(
-                QuizAnswer(
-                    quiz_id=quiz.id,
-                    student_id=seeded_students[0].id,
-                    question_id=q2.id,
-                    student_answer="false",
-                    is_correct=1,
-                    points_earned=1.0,
+                Attendance(
+                    student_id=student_by_name[student_name].id,
+                    attendance_date=attendance_date,
+                    status=status,
+                    notes=notes,
                 )
             )
 
-        if db.query(Message).count() < 6:
-            db.add(
-                Message(
-                    sender_id=admin_user.id,
-                    sender_name=admin_user.full_name,
-                    recipient_id=None,
-                    text="Bienvenue sur EduTrack. Cette base contient des donnees de demonstration.",
-                    category="general",
-                )
-            )
-            db.add(
-                Message(
-                    sender_id=parent_user.id,
-                    sender_name=parent_user.full_name,
-                    recipient_id=teacher_user.id,
-                    text="Bonjour, je souhaite un point sur les progres de Leo.",
-                    category="private",
-                )
-            )
+        info_quiz, info_questions = create_quiz_with_questions(
+            db,
+            teacher_user=info_teacher_user,
+            title="Quiz Informatique - Traitement de texte et clavier",
+            description="Cours: initiation a l'ordinateur, raccourcis clavier et saisie dans un contexte de salle multimedia a Yaounde.",
+            duration_minutes=25,
+            questions=[
+                {
+                    "question_text": "Quel raccourci permet de copier un texte sous Windows ?",
+                    "question_type": "multiple_choice",
+                    "options": ["Ctrl + C", "Ctrl + V", "Ctrl + X", "Alt + C"],
+                    "correct_answer": "Ctrl + C",
+                },
+                {
+                    "question_text": "Quel appareil permet d'afficher les informations de l'ordinateur ?",
+                    "question_type": "multiple_choice",
+                    "options": ["L'ecran", "La souris", "L'onduleur", "Le clavier"],
+                    "correct_answer": "L'ecran",
+                },
+                {
+                    "question_text": "Vrai ou faux: un dossier permet de ranger plusieurs fichiers.",
+                    "question_type": "true_false",
+                    "options": ["true", "false"],
+                    "correct_answer": "true",
+                },
+            ],
+        )
 
-        if db.query(Notification).count() < 6:
-            db.add(
-                Notification(
-                    user_id=parent_user.id,
-                    title="Nouveau bulletin",
-                    message="Le bulletin de votre enfant est disponible.",
-                    type="INFO",
+        english_quiz, english_questions = create_quiz_with_questions(
+            db,
+            teacher_user=english_teacher_user,
+            title="Quiz Anglais - Introducing yourself",
+            description="Cours: saluer, se presenter et parler de son ecole en anglais dans un contexte camerounais.",
+            duration_minutes=20,
+            questions=[
+                {
+                    "question_text": "Choose the correct greeting for the morning.",
+                    "question_type": "multiple_choice",
+                    "options": ["Good night", "Good morning", "Goodbye", "See you"],
+                    "correct_answer": "Good morning",
+                },
+                {
+                    "question_text": "Complete: My name ___ Cedric.",
+                    "question_type": "multiple_choice",
+                    "options": ["am", "is", "are", "be"],
+                    "correct_answer": "is",
+                },
+                {
+                    "question_text": "Vrai ou faux: 'I am in Form Three' peut servir a parler de sa classe.",
+                    "question_type": "true_false",
+                    "options": ["true", "false"],
+                    "correct_answer": "true",
+                },
+            ],
+        )
+
+        quiz_attempts = {
+            "Cedric Mvondo": {
+                info_quiz.id: ["Ctrl + C", "L'ecran", "true"],
+                english_quiz.id: ["Good morning", "is", "true"],
+            },
+            "Diane Fouda": {
+                info_quiz.id: ["Ctrl + C", "L'ecran", "true"],
+                english_quiz.id: ["Good morning", "is", "false"],
+            },
+            "Blaise Etoa": {
+                info_quiz.id: ["Ctrl + V", "L'ecran", "true"],
+                english_quiz.id: ["Good morning", "am", "true"],
+            },
+            "Ruth Ndzi": {
+                info_quiz.id: ["Ctrl + C", "Le clavier", "true"],
+                english_quiz.id: ["Good morning", "is", "true"],
+            },
+        }
+        quiz_meta = {
+            info_quiz.id: (info_quiz, info_questions),
+            english_quiz.id: (english_quiz, english_questions),
+        }
+        for index, (user, student) in enumerate(students):
+            attempts = quiz_attempts[user.full_name]
+            for quiz_id, answers in attempts.items():
+                quiz, questions = quiz_meta[quiz_id]
+                add_quiz_attempt(
+                    db,
+                    quiz=quiz,
+                    student=student,
+                    questions=questions,
+                    answers=answers,
+                    submitted_at=now - timedelta(hours=6 - index),
                 )
-            )
-            db.add(
-                Notification(
-                    user_id=teacher_user.id,
-                    title="Quiz complete",
-                    message="Le quiz de mathematiques a ete complete par un eleve.",
-                    type="SUCCESS",
-                )
-            )
+
+        messages = [
+            Message(
+                sender_id=admin_user.id,
+                sender_name=admin_user.full_name,
+                recipient_id=None,
+                text="Bienvenue sur la base de demonstration EduTrack. Les donnees concernent les classes de 3eme A et 3eme B.",
+                category="general",
+            ),
+            Message(
+                sender_id=parent_user.id,
+                sender_name=parent_user.full_name,
+                recipient_id=info_teacher_user.id,
+                text="Bonsoir professeur, merci de confirmer le prochain exercice pratique d'informatique pour Cedric et Diane.",
+                category="private",
+            ),
+            Message(
+                sender_id=parent_user.id,
+                sender_name=parent_user.full_name,
+                recipient_id=english_teacher_user.id,
+                text="Bonjour madame, Ruth revise bien ses salutations en anglais a la maison.",
+                category="private",
+            ),
+        ]
+        db.add_all(messages)
+
+        notifications = [
+            Notification(
+                user_id=parent_user.id,
+                title="Nouvelles notes disponibles",
+                message="Les notes d'Informatique et d'Anglais des 4 eleves ont ete publiees.",
+                type="INFO",
+            ),
+            Notification(
+                user_id=info_teacher_user.id,
+                title="Quiz rendu",
+                message="Les eleves de 3eme A et 3eme B ont soumis le quiz d'Informatique.",
+                type="SUCCESS",
+            ),
+            Notification(
+                user_id=english_teacher_user.id,
+                title="Suivi parent",
+                message="Un parent a envoye un message concernant l'evolution en Anglais.",
+                type="INFO",
+            ),
+        ]
+        db.add_all(notifications)
 
         db.commit()
 
-        summary = {
-            "schools": db.query(School).count(),
-            "users": db.query(User).count(),
-            "superadmins": db.query(SuperAdmin).count(),
-            "admins": db.query(Admin).count(),
-            "teachers": db.query(Teacher).count(),
-            "students": db.query(Student).count(),
-            "parents": db.query(Parent).count(),
-            "grades": db.query(Grade).count(),
-            "attendance": db.query(Attendance).count(),
-            "quizzes": db.query(Quiz).count(),
-            "quiz_questions": db.query(QuizQuestion).count(),
-            "quiz_answers": db.query(QuizAnswer).count(),
-            "messages": db.query(Message).count(),
-            "notifications": db.query(Notification).count(),
-        }
-        print("Seed termine.")
-        print("Identifiants principaux:")
-        print("  Superadmin: superadmin@edutrack.fr / superadmin123")
-        print("  Admin: admin@gmail.fr / admin123")
-        print("  Teacher: valerie@gmail.fr / teacher123")
-        print("  Parent: jean.martin@example.com / parent123")
-        print("  Student: leo.martin@gmail.fr / student123")
-        print("Resume:", summary)
+        print("=" * 72)
+        print("EduTrack demo seed termine")
+        print("=" * 72)
+        print("Bases supprimees avant recreation:")
+        if removed_dbs:
+            for db_path in removed_dbs:
+                print(f" - {db_path}")
+        else:
+            print(" - Aucune base precedente trouvee")
+
+        print("\nResume des donnees creees:")
+        print(f" - Ecole: {school.name}")
+        print(" - Classes: 3eme A (2 eleves), 3eme B (2 eleves)")
+        print(" - Matieres: Informatique, Anglais")
+        print(" - Quiz: 2")
+        print(" - Eleves lies au parent: 4")
+
+        print("\nIdentifiants de connexion:")
+        print("-" * 72)
+        for role, full_name, email, password in credentials:
+            print(f"{role:<11} | {full_name:<22} | {email:<34} | {password}")
+
+        print("\nMatricules eleves:")
+        print("-" * 72)
+        for user, student in students:
+            print(f"{user.full_name:<22} | {student.class_name:<7} | {student.matricule}")
+
     finally:
         db.close()
 

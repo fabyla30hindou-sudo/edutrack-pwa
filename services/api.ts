@@ -729,6 +729,15 @@ export const API = {
         return { success: true };
       }
     },
+
+    getStudentHistory: async (studentId: string): Promise<any[]> => {
+      try {
+        return await apiCall<any[]>(`/attendance/student/${studentId}`);
+      } catch (error) {
+        console.warn('Student attendance history error:', error);
+        return [];
+      }
+    },
   },
 
   messaging: {

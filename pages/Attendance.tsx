@@ -43,8 +43,12 @@ const Attendance: React.FC<AttendanceProps> = ({ activeClass }) => {
   const visibleStudents = useMemo(() => {
     const source = students.length ? students : FALLBACK_STUDENTS;
     const filtered = source.filter(student => !activeClass || !student.className || student.className === activeClass);
-    return filtered.length ? filtered : source;
+    return activeClass ? filtered : (filtered.length ? filtered : source);
   }, [students, activeClass]);
+
+  const visibleHistory = useMemo(() => {
+    return history.filter(session => !activeClass || !session.className || session.className === activeClass);
+  }, [history, activeClass]);
 
   useEffect(() => {
     const records = visibleStudents.reduce<Record<string, AttendanceRecord>>((acc, student) => {
@@ -202,9 +206,9 @@ const Attendance: React.FC<AttendanceProps> = ({ activeClass }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {history.length === 0 ? (
+          {visibleHistory.length === 0 ? (
             <p className="p-10 text-center text-slate-400 font-bold uppercase tracking-widest">Aucune séance enregistrée.</p>
-          ) : history.map(session => (
+          ) : visibleHistory.map(session => (
             <div key={session.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between hover:border-indigo-200 transition-all group">
               <div>
                 <p className="text-sm font-black text-slate-800">{session.date}</p>
