@@ -32,6 +32,14 @@ def _student_or_404(db: Session, student_id: int) -> Student:
     return student
 
 
+def _student_name(db: Session, student_id: int) -> str:
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        return f"Eleve #{student_id}"
+    user = db.query(User).filter(User.id == student.user_id).first()
+    return user.full_name if user else f"Eleve #{student_id}"
+
+
 def _assert_parent_child_access(db: Session, current_user: User, student_id: int):
     parent = db.query(Parent).filter(Parent.user_id == current_user.id).first()
     if not parent:
@@ -84,6 +92,7 @@ def get_all_grades(db: Session = Depends(get_db), current_user: User = Depends(g
         {
             "id": g.id,
             "student_id": g.student_id,
+            "student_name": _student_name(db, g.student_id),
             "subject": g.subject,
             "grade": g.grade,
             "comment": g.comment,

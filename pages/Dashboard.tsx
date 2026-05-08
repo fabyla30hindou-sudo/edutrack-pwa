@@ -3,6 +3,7 @@ import { UserRole, User, StudentProfile } from '../types';
 import { ICONS } from '../constants';
 import ParentChildSearch from '../components/ParentChildSearch';
 import { API } from '../services/api';
+import { generatePDFReport } from '../services/pdfGenerator';
 
 interface DashboardProps {
   role: UserRole;
@@ -114,6 +115,72 @@ const Dashboard: React.FC<DashboardProps> = ({ role, user, activeChild, setActiv
     }));
   }, [gradeSource]);
 
+  const handleGenerateReport = () => {
+    // Determine which student to generate report for
+    let studentName = user.name;
+    let studentClass = '';
+    let studentMatricule = user.matricule;
+
+    if (role === UserRole.PARENT && activeChild) {
+      studentName = activeChild.name;
+      studentClass = activeChild.class;
+    } else if (role === UserRole.STUDENT) {
+      studentClass = user.class || activeClass;
+    }
+
+    // Prepare report data
+    const reportData = {
+      studentName,
+      className: studentClass,
+      matricule: studentMatricule,
+      generatedDate: new Date().toLocaleDateString('fr-FR', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+      overallAverage: average(gradeSource.map(g => Number(g.grade || 0))),
+      attendanceRate,
+      subjectAverages: subjectAverages.map(item => ({
+        subject: item.subject,
+        average: item.average,
+        grade: item.average >= 15 ? 'A' : item.average >= 10 ? 'B' : 'C'
+      })),
+      grades: childGrades.map(g => ({
+        subject: g.subject,
+        grade: Number(g.grade || 0),
+        date: g.graded_date || g.date || '',
+        comment: g.comment || ''
+      })),
+      quizzes: completedQuizzes.map(q => ({
+        title: q.title,
+        chapter: q.chapter,
+        score: Number(q.averageScore || 0),
+        correctAnswers: Number(q.correctAnswers || 0),
+        totalQuestions: Number(q.answeredQuestions || q.questionCount || 0)
+      })),
+      attendance: attendance.slice(0, 30).map(a => ({
+        date: a.date || a.attendance_date || '',
+        status: a.status || 'present',
+        notes: a.observation || a.notes || ''
+      })),
+      messages: messages.slice(0, 10).map(m => ({
+        sender: m.senderName || 'Inconnu',
+        text: m.text,
+        date: m.timestamp || ''
+      })),
+      notifications: notifications.slice(0, 10).map(n => ({
+        title: n.title || 'Notification',
+        description: n.description || n.message || '',
+        date: n.time || n.timestamp || '',
+        type: n.type || 'system'
+      }))
+    };
+
+    generatePDFReport(reportData);
+  };
+
   const stats = [
     { label: 'Moyenne', value: `${average(gradeSource.map(g => Number(g.grade || 0))) || '-'}/20`, icon: <ICONS.Stats /> },
     { label: 'Présence', value: attendance.length ? `${attendanceRate}%` : '-', icon: <ICONS.Presence /> },
@@ -167,7 +234,10 @@ const Dashboard: React.FC<DashboardProps> = ({ role, user, activeChild, setActiv
               {role === UserRole.PARENT && (activeChild ? `Suivi de ${activeChild.name}: ${childGrades.length} note(s), ${attendance.length} point(s) de présence, ${unreadMessages} message(s) à traiter.` : 'Associe ou sélectionne un enfant pour afficher son suivi complet.')}
             </p>
           </div>
-          <button className="bg-white text-indigo-600 px-6 py-3 rounded-2xl font-black text-xs shadow-lg">
+          <button 
+            onClick={handleGenerateReport}
+            className="bg-white text-indigo-600 px-6 py-3 rounded-2xl font-black text-xs shadow-lg hover:scale-105 transition-transform cursor-pointer"
+          >
             {role === UserRole.TEACHER ? 'Classe active' : 'Rapport complet'}
           </button>
         </div>

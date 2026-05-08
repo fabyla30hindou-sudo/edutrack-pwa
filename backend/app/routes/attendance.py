@@ -21,6 +21,14 @@ def _student_or_404(db: Session, student_id: int) -> Student:
     return student
 
 
+def _student_name(db: Session, student_id: int) -> str:
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        return f"Eleve #{student_id}"
+    user = db.query(User).filter(User.id == student.user_id).first()
+    return user.full_name if user else f"Eleve #{student_id}"
+
+
 def _teacher_scope(db: Session, current_user: User):
     teacher = db.query(Teacher).filter(Teacher.user_id == current_user.id).first()
     if not teacher:
@@ -91,6 +99,8 @@ def get_all_attendance(
         {
             "id": a.id,
             "student_id": a.student_id,
+            "student_name": _student_name(db, a.student_id),
+            "class_name": _student_or_404(db, a.student_id).class_name,
             "attendance_date": str(a.attendance_date),
             "status": a.status,
             "notes": a.notes

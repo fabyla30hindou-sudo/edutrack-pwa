@@ -48,7 +48,7 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
     setIsTyping(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
       const systemPrompt = `Tu es EduAI, un assistant pédagogique expert pour une application de suivi scolaire. 
       L'utilisateur actuel est un ${role}. 
       - Si c'est un ÉLÈVE: Aide-le à comprendre ses cours, donne des astuces de révision.
@@ -73,6 +73,15 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
       setMessages(prev => [...prev, aiMsg]);
     } catch (error) {
       console.error("AI Error:", error);
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        senderId: 'ai',
+        senderName: 'EduAI',
+        text: "Désolé, une erreur s'est produite. Vérifiez votre connexion internet ou la clé API.",
+        timestamp: 'Maintenant',
+        isMe: false
+      };
+      setMessages(prev => [...prev, errorMsg]);
     } finally {
       setIsTyping(false);
     }
