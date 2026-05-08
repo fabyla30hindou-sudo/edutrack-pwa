@@ -375,7 +375,7 @@ def get_student_quiz_analytics(
         score = round((earned_points / total_points) * 100) if total_points > 0 else 0
 
         # Get first attempt date
-        first_answer = min(quiz_answers, key=lambda x: x.created_at if x.created_at else datetime.min)
+        first_answer = min(quiz_answers, key=lambda x: x.submitted_at if x.submitted_at else datetime.min)
 
         quizzes_data.append({
             "quiz_id": quiz_id,
@@ -383,7 +383,7 @@ def get_student_quiz_analytics(
             "score": score,
             "correct_answers": correct,
             "total_questions": len(questions),
-            "attempt_date": str(first_answer.created_at) if first_answer.created_at else None,
+            "attempt_date": str(first_answer.submitted_at) if first_answer.submitted_at else None,
             "answers": [
                 {
                     "question_id": answer.question_id,

@@ -15,6 +15,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Results from './pages/Results';
 import Grades from './pages/Grades';
 import AIChat from './components/AIChat';
+import AIRecommendations from './components/AIRecommendations';
 import FollowUp from './pages/FollowUp';
 
 const mapChildToProfile = (c: any): StudentProfile => ({
@@ -119,6 +120,8 @@ const App: React.FC = () => {
         return user.role === UserRole.TEACHER ? <FollowUp user={user} activeClass={activeClass} /> : null;
       case 'messaging':
         return <Messaging role={user.role} user={user} activeChild={activeChild} />;
+      case 'recommendations':
+        return (user.role === UserRole.STUDENT || user.role === UserRole.PARENT) ? <AIRecommendations user={user} activeChild={activeChild} /> : <Dashboard role={user.role} user={user} activeChild={activeChild} setActiveChild={setActiveChild} activeClass={activeClass} setActiveClass={setActiveClass} />;
       case 'notifications':
         return <Notifications />;
       case 'profile':
@@ -128,6 +131,9 @@ const App: React.FC = () => {
         return <Dashboard role={user.role} user={user} activeChild={activeChild} setActiveChild={setActiveChild} activeClass={activeClass} setActiveClass={setActiveClass} />;
     }
   };
+
+  // Students don't see the floating AI Chat button - they have AI Recommendations page instead
+  const showAIChat = user.role !== UserRole.STUDENT;
 
   return (
     <>
@@ -139,7 +145,7 @@ const App: React.FC = () => {
       >
         {renderPage()}
       </Layout>
-      <AIChat role={user.role} userName={user.name} />
+      {showAIChat && <AIChat role={user.role} userName={user.name} />}
     </>
   );
 };

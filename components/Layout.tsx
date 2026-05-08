@@ -24,6 +24,7 @@ const Layout: React.FC<LayoutProps> = ({ children, role, currentPage, onNavigate
       items.splice(1, 0, { id: 'quizzes', label: 'Quiz', icon: ICONS.Quiz });
       items.splice(2, 0, { id: 'grades', label: 'Notes', icon: ICONS.Stats });
       items.splice(3, 0, { id: 'results', label: 'Résultats', icon: ICONS.Stats });
+      items.splice(4, 0, { id: 'recommendations', label: 'IA', icon: ICONS.Sparkles });
     } else if (role === UserRole.TEACHER) {
       items.splice(1, 0, { id: 'attendance', label: 'Présence', icon: ICONS.Presence });
       items.splice(2, 0, { id: 'grades', label: 'Notes', icon: ICONS.Stats });
@@ -32,6 +33,7 @@ const Layout: React.FC<LayoutProps> = ({ children, role, currentPage, onNavigate
     } else if (role === UserRole.PARENT) {
       items.splice(1, 0, { id: 'grades', label: 'Notes', icon: ICONS.Stats });
       items.splice(2, 0, { id: 'results', label: 'Résultats', icon: ICONS.Stats });
+      items.splice(3, 0, { id: 'recommendations', label: 'IA', icon: ICONS.Sparkles });
     } else if (role === UserRole.SUPERADMIN) {
       items = [
         { id: 'dashboard', label: 'Vue globale', icon: ICONS.Dashboard },
