@@ -180,20 +180,26 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
     studentName: string;
   }) => {
     try {
-      const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash',
-        systemInstruction: 'Tu es un conseiller pédagogique expert qui aide les élèves à s\'améliorer. Tes recommandations doivent être pratiques, actionnables et encourageantes.'
-      });
-      
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey || apiKey === 'votre_cle_api_gemini_ici') {
+        throw new Error('API_KEY_MISSING');
+      }
+
+      console.log('🔑 Clé API présente pour recommandations:', apiKey.substring(0, 10) + '...');
+
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }, { apiVersion: 'v1' });
+
       // Prepare data summary for AI
       const weakSubjects = data.subjectAverages.filter(s => s.average < 12);
       const strongSubjects = data.subjectAverages.filter(s => s.average >= 15);
-      const trend = data.evolution.length >= 3 ? 
-        (data.evolution[data.evolution.length - 1].grade > data.evolution[0].grade ? 'en progression' : 
+      const trend = data.evolution.length >= 3 ?
+        (data.evolution[data.evolution.length - 1].grade > data.evolution[0].grade ? 'en progression' :
          data.evolution[data.evolution.length - 1].grade < data.evolution[0].grade ? 'en baisse' : 'stable') : 'insuffisante';
 
-      const prompt = `Tu es un conseiller pédagogique expert. Analyse les données suivantes pour l'élève ${data.studentName} et fournis des recommandations personnalisées et actionnables pour son amélioration.
+      const prompt = `Tu es un conseiller pédagogique expert qui aide les élèves à s'améliorer. Tes recommandations doivent être pratiques, actionnables et encourageantes.
+
+Analyse les données suivantes pour l'élève ${data.studentName} et fournis des recommandations personnalisées et actionnables pour son amélioration.
 
 DONNÉES DE L'ÉLÈVE:
 - Nombre total de notes: ${data.totalGrades}
@@ -217,14 +223,35 @@ Fournis une analyse structurée avec:
 
 Sois encourageant, précis et pédagogique. Utilise un ton bienveillant mais exigeant.`;
 
+      console.log('📤 Envoi de la requête recommandations à Gemini...');
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
 
+      console.log('✅ Réponse recommandations reçue de Gemini');
       setRecommendation(text || "Désolé, je n'ai pas pu générer de recommandations pour le moment.");
     } catch (err) {
-      console.error('AI Error:', err);
-      setError('Erreur lors de la génération des recommandations. Vérifiez votre connexion ou réessayez plus tard.');
+      console.error('❌ Erreur AI recommandations détaillée:', err);
+
+      let errorMessage = 'Erreur lors de la génération des recommandations.';
+
+      if (err.message === 'API_KEY_MISSING') {
+        errorMessage = "Clé API Gemini manquante. Veuillez configurer VITE_GEMINI_API_KEY dans votre fichier .env";
+      } else if (err.message?.includes('API_KEY_INVALID')) {
+        errorMessage = "Clé API Gemini invalide. Vérifiez votre clé API sur https://makersuite.google.com/app/apikey";
+      } else if (err.message?.includes('PERMISSION_DENIED')) {
+        errorMessage = "Permission refusée. Votre clé API n'a pas les permissions nécessaires.";
+      } else if (err.message?.includes('QUOTA_EXCEEDED')) {
+        errorMessage = "Quota dépassé. Vous avez atteint la limite d'utilisation de l'API Gemini.";
+      } else if (err.message?.includes('NETWORK_ERROR') || err.message?.includes('fetch')) {
+        errorMessage = "Erreur de connexion. Vérifiez votre connexion internet.";
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+        errorMessage = "Impossible de contacter les serveurs Gemini. Vérifiez votre connexion internet.";
+      } else {
+        errorMessage = `Erreur API Gemini: ${err.message || 'Erreur inconnue'}. Vérifiez votre clé API et votre connexion.`;
+      }
+
+      setError(errorMessage);
     }
   };
 

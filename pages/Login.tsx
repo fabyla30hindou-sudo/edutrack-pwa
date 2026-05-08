@@ -78,7 +78,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, onShowRegister }) => {
           <div className="w-20 h-20 bg-indigo-600 rounded-[28px] mx-auto flex items-center justify-center shadow-2xl shadow-indigo-200 mb-6 transform -rotate-6">
             <span className="text-4xl text-white font-black">E</span>
           </div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">EduTrack</h1>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">EduGo</h1>
           <p className="text-sm text-slate-500">Connexion</p>
         </div>
 

@@ -29,7 +29,7 @@ export const Storage = {
     }
     if (!localStorage.getItem(KEYS.MESSAGES)) {
       localStorage.setItem(KEYS.MESSAGES, JSON.stringify([
-        { id: 'm1', senderId: 'ai', senderName: 'Système', text: 'Bienvenue sur EduTrack !', timestamp: '08:00', isMe: false, category: 'general' }
+        { id: 'm1', senderId: 'ai', senderName: 'Système', text: 'Bienvenue sur EduGo !', timestamp: '08:00', isMe: false, category: 'general' }
       ]));
     }
     if (!localStorage.getItem(KEYS.USERS_LIST)) {

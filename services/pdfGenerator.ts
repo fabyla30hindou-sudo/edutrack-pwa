@@ -47,7 +47,7 @@ export const generatePDFReport = (data: ReportData): void => {
   <div class="bg-indigo-600 text-white p-8 rounded-3xl mb-8">
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-3xl font-black">EduTrack Pro</h1>
+        <h1 class="text-3xl font-black">EduGo</h1>
         <p class="text-indigo-200 text-sm mt-1">Rapport de suivi scolaire</p>
       </div>
       <div class="text-right">
@@ -207,7 +207,7 @@ export const generatePDFReport = (data: ReportData): void => {
   <!-- Footer -->
   <div class="mt-12 pt-8 border-t border-slate-200 text-center">
     <p class="text-sm text-slate-500">
-      Rapport généré automatiquement par <strong class="text-indigo-600">EduTrack Pro</strong>
+      Rapport généré automatiquement par <strong class="text-indigo-600">EduGo</strong>
     </p>
     <p class="text-xs text-slate-400 mt-2">
       Document confidentiel - Usage interne uniquement

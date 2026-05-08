@@ -84,7 +84,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-indigo-600">
         <div className="w-16 h-16 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4"></div>
-        <p className="text-white font-black uppercase tracking-widest text-[9px]">EduTrack Pro</p>
+        <p className="text-white font-black uppercase tracking-widest text-[9px]">EduGo</p>
       </div>
     );
   }

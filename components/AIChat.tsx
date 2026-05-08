@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { UserRole, Message } from '../types';
 import { ICONS } from '../constants';
+import { testGeminiAPI } from '../services/geminiTest';
 
 interface AIChatProps {
   role: UserRole;
@@ -48,23 +49,31 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
     setIsTyping(true);
 
     try {
-      const systemPrompt = `Tu es EduAI, un assistant pédagogique expert pour une application de suivi scolaire. 
-      L'utilisateur actuel est un ${role}. 
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey || apiKey === 'votre_cle_api_gemini_ici') {
+        throw new Error('API_KEY_MISSING');
+      }
+
+      console.log('🔑 Clé API présente:', apiKey.substring(0, 10) + '...');
+
+      const systemPrompt = `Tu es EduAI, un assistant pédagogique expert pour une application de suivi scolaire.
+      L'utilisateur actuel est un ${role}.
       - Si c'est un ÉLÈVE: Aide-le à comprendre ses cours, donne des astuces de révision.
       - Si c'est un ENSEIGNANT: Aide-le à concevoir des questions de quiz, à gérer le comportement ou à rédiger des messages aux parents.
       - Si c'est un PARENT: Aide-le à interpréter les résultats de son enfant et donne des conseils pour l'accompagnement à la maison.
       Reste professionnel, encourageant et concis. Ne sors jamais de ton rôle d'assistant éducatif.`;
 
-      const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash',
-        systemInstruction: systemPrompt
-      });
+      console.log('🤖 Initialisation Gemini...');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }, { apiVersion: 'v1' });
 
-      const result = await model.generateContent(input);
+      const fullPrompt = `${systemPrompt}\n\nUser: ${input}`;
+      console.log('📤 Envoi de la requête à Gemini:', input.substring(0, 50) + '...');
+      const result = await model.generateContent(fullPrompt);
       const response = await result.response;
       const text = response.text();
 
+      console.log('✅ Réponse reçue de Gemini');
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
         senderId: 'ai',
@@ -75,12 +84,31 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
       };
       setMessages(prev => [...prev, aiMsg]);
     } catch (error) {
-      console.error("AI Error:", error);
+      console.error("❌ Erreur AI détaillée:", error);
+
+      let errorMessage = "Désolé, une erreur s'est produite.";
+
+      if (error.message === 'API_KEY_MISSING') {
+        errorMessage = "Clé API Gemini manquante. Veuillez configurer VITE_GEMINI_API_KEY dans votre fichier .env";
+      } else if (error.message?.includes('API_KEY_INVALID')) {
+        errorMessage = "Clé API Gemini invalide. Vérifiez votre clé API sur https://makersuite.google.com/app/apikey";
+      } else if (error.message?.includes('PERMISSION_DENIED')) {
+        errorMessage = "Permission refusée. Votre clé API n'a pas les permissions nécessaires.";
+      } else if (error.message?.includes('QUOTA_EXCEEDED')) {
+        errorMessage = "Quota dépassé. Vous avez atteint la limite d'utilisation de l'API Gemini.";
+      } else if (error.message?.includes('NETWORK_ERROR') || error.message?.includes('fetch')) {
+        errorMessage = "Erreur de connexion. Vérifiez votre connexion internet.";
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = "Impossible de contacter les serveurs Gemini. Vérifiez votre connexion internet.";
+      } else {
+        errorMessage = `Erreur API Gemini: ${error.message || 'Erreur inconnue'}. Vérifiez votre clé API et votre connexion.`;
+      }
+
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         senderId: 'ai',
         senderName: 'EduAI',
-        text: "Désolé, une erreur s'est produite. Vérifiez votre connexion internet ou la clé API.",
+        text: errorMessage,
         timestamp: 'Maintenant',
         isMe: false
       };
@@ -150,6 +178,13 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
               />
+              <button
+                onClick={() => testGeminiAPI()}
+                className="text-slate-400 hover:text-indigo-600 hover:scale-110 transition-all p-1"
+                title="Tester l'API Gemini"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              </button>
               <button 
                 onClick={handleSend}
                 className="text-indigo-600 hover:scale-110 transition-transform"

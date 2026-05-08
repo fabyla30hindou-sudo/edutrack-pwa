@@ -140,15 +140,36 @@ Structure obligatoire:
 Sois specifique, personnalise, actionnable, et base uniquement sur les donnees fournies.
 `;
 
-      const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      console.log('📤 Envoi de la requête suivi à Gemini...');
+      const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' }, { apiVersion: 'v1' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
 
+      console.log('✅ Réponse suivi reçue de Gemini');
       setRecommendation(text || "Aucune recommandation n'a ete generee.");
     } catch (error) {
-      console.error('AI follow-up error:', error);
-      setRecommendation("Impossible de generer la recommandation pour le moment.");
+      console.error('❌ Erreur AI suivi détaillée:', error);
+
+      let errorMessage = "Impossible de generer la recommandation pour le moment.";
+
+      if (error.message === 'API_KEY_MISSING') {
+        errorMessage = "Clé API Gemini manquante. Veuillez configurer VITE_GEMINI_API_KEY dans votre fichier .env";
+      } else if (error.message?.includes('API_KEY_INVALID')) {
+        errorMessage = "Clé API Gemini invalide. Vérifiez votre clé API sur https://makersuite.google.com/app/apikey";
+      } else if (error.message?.includes('PERMISSION_DENIED')) {
+        errorMessage = "Permission refusée. Votre clé API n'a pas les permissions nécessaires.";
+      } else if (error.message?.includes('QUOTA_EXCEEDED')) {
+        errorMessage = "Quota dépassé. Vous avez atteint la limite d'utilisation de l'API Gemini.";
+      } else if (error.message?.includes('NETWORK_ERROR') || error.message?.includes('fetch')) {
+        errorMessage = "Erreur de connexion. Vérifiez votre connexion internet.";
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = "Impossible de contacter les serveurs Gemini. Vérifiez votre connexion internet.";
+      } else {
+        errorMessage = `Erreur API Gemini: ${error.message || 'Erreur inconnue'}. Vérifiez votre clé API et votre connexion.`;
+      }
+
+      setRecommendation(errorMessage);
     } finally {
       setIsGenerating(false);
     }

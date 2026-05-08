@@ -59,7 +59,7 @@ const Layout: React.FC<LayoutProps> = ({ children, role, currentPage, onNavigate
         <div className="p-8 border-b border-slate-100 flex items-center space-x-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-lg shadow-indigo-100">E</div>
           <div>
-            <h1 className="text-xl font-black text-slate-800 tracking-tight">EduTrack Pro</h1>
+            <h1 className="text-xl font-black text-slate-800 tracking-tight">EduGo</h1>
             <p className="text-[10px] text-indigo-600 uppercase font-black tracking-widest leading-none">{role}</p>
           </div>
         </div>
@@ -102,7 +102,7 @@ const Layout: React.FC<LayoutProps> = ({ children, role, currentPage, onNavigate
         <header className="md:hidden flex items-center justify-between px-6 py-4 bg-white/80 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50">
           <div className="flex items-center space-x-2">
             <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-sm">E</div>
-            <h1 className="text-lg font-black text-slate-800">EduTrack</h1>
+            <h1 className="text-lg font-black text-slate-800">EduGo</h1>
           </div>
           <button onClick={() => onNavigate('profile')} className="w-10 h-10 rounded-xl bg-slate-100 overflow-hidden border-2 border-white shadow-sm">
             <ICONS.User />
