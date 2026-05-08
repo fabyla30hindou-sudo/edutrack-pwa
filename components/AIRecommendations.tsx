@@ -36,17 +36,9 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
     setError('');
     
     try {
-      // Fetch all student data
-      const [gradesData, quizzesData, attendanceData] = await Promise.all([
-        API.grades.list().catch(() => []),
-        API.quizzes.list().catch(() => []),
-        API.attendance.listSessions().catch(() => [])
-      ]);
-
-      // Filter data for current student
-      let studentGrades = gradesData;
-      let studentAttendance = attendanceData.flatMap((session: any) => session.records || []);
-      let studentQuizzes = quizzesData;
+      let studentGrades: any[] = [];
+      let studentAttendance: any[] = [];
+      let studentQuizzes: Quiz[] = [];
 
       // If parent viewing child, get specific child data
       if (user.role === UserRole.PARENT && activeChild?.id) {
@@ -68,8 +60,53 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
           }));
         }
       } else if (user.role === UserRole.STUDENT) {
-        // Filter for current student
-        studentGrades = gradesData.filter((g: any) => String(g.studentId) === String(user.id));
+        // For students, we need to get their student record first to find their student_id
+        // Then fetch their specific data
+        try {
+          const studentRecord = await API.students.getByUserId(user.id);
+          if (studentRecord) {
+            // Fetch student-specific data
+            const [grades, attendance, quizAnalytics] = await Promise.all([
+              API.students.getGrades(studentRecord.id).catch(() => []),
+              API.attendance.getStudentHistory(studentRecord.id).catch(() => []),
+              API.quizzes.getStudentAnalytics(studentRecord.id).catch(() => null),
+            ]);
+            studentGrades = grades;
+            studentAttendance = attendance;
+            
+            // Get quizzes list and apply student analytics
+            const quizzesList = await API.quizzes.list().catch(() => []);
+            studentQuizzes = quizzesList;
+            
+            // If quiz analytics available, update quiz scores
+            if (quizAnalytics && quizAnalytics.quizzes) {
+              studentQuizzes = studentQuizzes.map(quiz => {
+                const userQuiz = quizAnalytics.quizzes.find((q: any) => String(q.quiz_id) === String(quiz.id));
+                if (userQuiz) {
+                  return {
+                    ...quiz,
+                    status: 'completed' as const,
+                    averageScore: userQuiz.score || 0,
+                    correctAnswers: userQuiz.correct_answers || 0,
+                    answeredQuestions: userQuiz.total_questions || 0,
+                  };
+                }
+                return quiz;
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Error fetching student data, falling back to filtered list:', err);
+          // Fallback: try to filter from general lists
+          const [gradesData, quizzesData, attendanceData] = await Promise.all([
+            API.grades.list().catch(() => []),
+            API.quizzes.list().catch(() => []),
+            API.attendance.listSessions().catch(() => [])
+          ]);
+          studentGrades = gradesData;
+          studentQuizzes = quizzesData;
+          studentAttendance = attendanceData.flatMap((session: any) => session.records || []);
+        }
       }
 
       // Calculate subject averages
