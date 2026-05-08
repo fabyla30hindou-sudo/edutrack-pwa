@@ -1,4 +1,4 @@
-..i/**
+/**
  * PDF Report Generator for EduTrack
  * Generates comprehensive PDF reports for students
  */
