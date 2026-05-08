@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { User } from '../types';
 import { API } from '../services/api';
 
@@ -97,7 +97,7 @@ const FollowUp: React.FC<FollowUpProps> = ({ user, activeClass }) => {
         return;
       }
 
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenerativeAI(apiKey);
       const attendanceStats = getAttendanceStats(student.attendance);
       const subjectGrades = (student.grades || []).filter((grade) => grade.subject === teacherSubject);
 
@@ -140,12 +140,12 @@ Structure obligatoire:
 Sois specifique, personnalise, actionnable, et base uniquement sur les donnees fournies.
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-      });
+      const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
 
-      setRecommendation(response.text || "Aucune recommandation n'a ete generee.");
+      setRecommendation(text || "Aucune recommandation n'a ete generee.");
     } catch (error) {
       console.error('AI follow-up error:', error);
       setRecommendation("Impossible de generer la recommandation pour le moment.");

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, StudentProfile, Quiz, UserRole } from '../types';
 import { API } from '../services/api';
 import { ICONS } from '../constants';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface AIRecommendationsProps {
   user: User;
@@ -180,7 +180,11 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
     studentName: string;
   }) => {
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        systemInstruction: 'Tu es un conseiller pédagogique expert qui aide les élèves à s\'améliorer. Tes recommandations doivent être pratiques, actionnables et encourageantes.'
+      });
       
       // Prepare data summary for AI
       const weakSubjects = data.subjectAverages.filter(s => s.average < 12);
@@ -213,13 +217,11 @@ Fournis une analyse structurée avec:
 
 Sois encourageant, précis et pédagogique. Utilise un ton bienveillant mais exigeant.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: { systemInstruction: 'Tu es un conseiller pédagogique expert qui aide les élèves à s\'améliorer. Tes recommandations doivent être pratiques, actionnables et encourageantes.' }
-      });
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
 
-      setRecommendation(response.text || "Désolé, je n'ai pas pu générer de recommandations pour le moment.");
+      setRecommendation(text || "Désolé, je n'ai pas pu générer de recommandations pour le moment.");
     } catch (err) {
       console.error('AI Error:', err);
       setError('Erreur lors de la génération des recommandations. Vérifiez votre connexion ou réessayez plus tard.');

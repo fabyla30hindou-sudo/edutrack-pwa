@@ -1,5 +1,7 @@
-fastapi
+# Pin FastAPI to a compatible version for fastapi_amis_admin 0.7.3
+fastapi==0.135.0
 uvicorn
+jinja2
 sqlalchemy
 python-jose[cryptography]
 passlib[bcrypt]

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { UserRole, Message } from '../types';
 import { ICONS } from '../constants';
 
@@ -48,7 +48,6 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
     setIsTyping(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
       const systemPrompt = `Tu es EduAI, un assistant pédagogique expert pour une application de suivi scolaire. 
       L'utilisateur actuel est un ${role}. 
       - Si c'est un ÉLÈVE: Aide-le à comprendre ses cours, donne des astuces de révision.
@@ -56,17 +55,21 @@ const AIChat: React.FC<AIChatProps> = ({ role, userName }) => {
       - Si c'est un PARENT: Aide-le à interpréter les résultats de son enfant et donne des conseils pour l'accompagnement à la maison.
       Reste professionnel, encourageant et concis. Ne sors jamais de ton rôle d'assistant éducatif.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: input,
-        config: { systemInstruction: systemPrompt }
+      const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        systemInstruction: systemPrompt
       });
+
+      const result = await model.generateContent(input);
+      const response = await result.response;
+      const text = response.text();
 
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
         senderId: 'ai',
         senderName: 'EduAI',
-        text: response.text || "Désolé, je n'ai pas pu générer de réponse.",
+        text: text || "Désolé, je n'ai pas pu générer de réponse.",
         timestamp: 'Maintenant',
         isMe: false
       };
