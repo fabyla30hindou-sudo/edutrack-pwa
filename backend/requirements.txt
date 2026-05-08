@@ -5,3 +5,5 @@ python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
 pydantic
+fastapi_amis_admin
+aiosqlite

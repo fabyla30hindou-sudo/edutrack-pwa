@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.routes import students, attendance, grades, quizzes, users, auth, messages, notifications, schools, parents
+from app.admin_site import mount_admin
 import importlib
 import hashlib
 from sqlalchemy.orm import Session
@@ -68,6 +69,8 @@ app = FastAPI(
     description="Backend API for EduTrack - Student Management System",
     version="1.0.0"
 )
+
+mount_admin(app)
 
 # Configure CORS
 app.add_middleware(
