@@ -70,7 +70,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-mount_admin(app)
+try:
+    mount_admin(app)
+except Exception as e:
+    print("WARNING: admin site mount failed, continuing without admin:", e)
 
 # Configure CORS
 app.add_middleware(

@@ -3,6 +3,7 @@ import { User, StudentProfile, Quiz, UserRole } from '../types';
 import { API } from '../services/api';
 import { ICONS } from '../constants';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import ReactMarkdown from 'react-markdown';
 
 interface AIRecommendationsProps {
   user: User;
@@ -159,7 +160,8 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
         quizAverage,
         completedQuizzesCount: completedQuizzes.length,
         totalGrades: studentGrades.length,
-        studentName: activeChild?.name || user.name
+        studentName: activeChild?.name || user.name,
+        userRole: user.role
       });
 
     } catch (err) {
@@ -178,6 +180,7 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
     completedQuizzesCount: number;
     totalGrades: number;
     studentName: string;
+    userRole: UserRole;
   }) => {
     try {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
@@ -197,7 +200,41 @@ const AIRecommendations: React.FC<AIRecommendationsProps> = ({ user, activeChild
         (data.evolution[data.evolution.length - 1].grade > data.evolution[0].grade ? 'en progression' :
          data.evolution[data.evolution.length - 1].grade < data.evolution[0].grade ? 'en baisse' : 'stable') : 'insuffisante';
 
-      const prompt = `Tu es un conseiller pédagogique expert qui aide les élèves à s'améliorer. Tes recommandations doivent être pratiques, actionnables et encourageantes.
+      // Create different prompts based on user role
+      const isParent = data.userRole === UserRole.PARENT;
+      
+      const prompt = isParent ? 
+        // PROMPT FOR PARENTS
+        `Tu es un expert en pédagogie et en accompagnement parental. Tu aides les parents à soutenir le développement des compétences et apprentissages de leurs enfants à la maison.
+
+Analyse les données suivantes pour l'enfant ${data.studentName} et fournis des recommandations pratiques et actionnables que les parents peuvent mettre en place à la maison.
+
+DONNÉES DE L'ENFANT:
+- Nombre total de notes: ${data.totalGrades}
+- Moyenne des quiz: ${data.quizAverage}%
+- Quiz complétés: ${data.completedQuizzesCount}
+- Taux de présence: ${data.attendanceRate}%
+- Évolution générale: ${trend}
+
+MATIÈRES ET MOYENNES:
+${data.subjectAverages.map(s => `- ${s.subject}: ${s.average}/20`).join('\n')}
+
+POINTS FORTS (≥15/20): ${strongSubjects.length > 0 ? strongSubjects.map(s => `${s.subject} (${s.average}/20)`).join(', ') : 'Aucun'}
+POINTS FAIBLES (<12/20): ${weakSubjects.length > 0 ? weakSubjects.map(s => `${s.subject} (${s.average}/20)`).join(', ') : 'Aucun'}
+
+Fournis une analyse structurée avec:
+1. 📋 **Analyse de la situation** - Vue d'ensemble des forces et défis de l'enfant
+2. 🏠 **Activités à faire à la maison** - 3-4 activités pratiques et amusantes par domaine faible (avec des exemples concrets)
+3. 💡 **Stratégies de soutien parental** - Comment créer un environnement favorable aux apprentissages, gérer le stress académique
+4. 📚 **Ressources et outils** - Ressources externes, jeux éducatifs, sites web pour renforcer les apprentissages
+5. 🎯 **Objectifs réalistes à court terme** - Comment suivre les progrès, récompenser les efforts
+6. 💬 **Communication avec l'école** - Questions à poser aux enseignants, suivi recommandé
+7. 🌟 **Encouragements** - Message positif pour motiver à la fois le parent et l'enfant
+
+Sois bienveillant, pratique et orienté action. Donne des conseils que les parents peuvent facilement mettre en œuvre. Valorise l'effort et la progression plutôt que la perfection.`
+        :
+        // PROMPT FOR STUDENTS
+        `Tu es un conseiller pédagogique expert qui aide les élèves à s'améliorer. Tes recommandations doivent être pratiques, actionnables et encourageantes.
 
 Analyse les données suivantes pour l'élève ${data.studentName} et fournis des recommandations personnalisées et actionnables pour son amélioration.
 
@@ -401,10 +438,22 @@ Sois encourageant, précis et pédagogique. Utilise un ton bienveillant mais exi
             {error}
           </div>
         ) : recommendation ? (
-          <div className="prose prose-slate max-w-none">
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+          <div className="prose prose-slate max-w-none prose-sm">
+            <ReactMarkdown
+              components={{
+                h1: ({node, ...props}) => <h1 className="text-2xl font-black text-slate-800 mt-4 mb-2" {...props} />,
+                h2: ({node, ...props}) => <h2 className="text-xl font-bold text-slate-800 mt-3 mb-2" {...props} />,
+                h3: ({node, ...props}) => <h3 className="text-lg font-bold text-slate-800 mt-2 mb-1" {...props} />,
+                p: ({node, ...props}) => <p className="text-slate-700 mb-2 leading-relaxed" {...props} />,
+                ul: ({node, ...props}) => <ul className="list-disc list-inside text-slate-700 mb-2 space-y-1" {...props} />,
+                ol: ({node, ...props}) => <ol className="list-decimal list-inside text-slate-700 mb-2 space-y-1" {...props} />,
+                li: ({node, ...props}) => <li className="text-slate-700" {...props} />,
+                strong: ({node, ...props}) => <strong className="font-bold text-slate-800" {...props} />,
+                em: ({node, ...props}) => <em className="italic text-slate-700" {...props} />,
+              }}
+            >
               {recommendation}
-            </div>
+            </ReactMarkdown>
           </div>
         ) : (
           <div className="text-center py-8 text-slate-400">
